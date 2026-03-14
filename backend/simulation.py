@@ -99,9 +99,9 @@ def run_simulation_tick(
 ) -> dict[str, Any]:
     """Simulate one calendar day of construction site activity.
 
-    Workers fill each worker / building zone to ~80% of capacity (with
-    daily variance and occasional surges).  Materials deplete every day
-    and restock every 14 days.  Cranes are tracked as active / inactive.
+    Workers fill each worker zone to ~80% of capacity (with daily
+    variance and occasional surges).  Materials deplete every day and
+    restock every 14 days.  Cranes are tracked as active / inactive.
 
     Parameters
     ----------
@@ -115,8 +115,20 @@ def run_simulation_tick(
     -------
     dict  –  Full site state keyed by ``workers``, ``materials``,
              ``cranes``, plus summary fields.  Deterministic for any
-             given *(zones, day)* pair.
+             given *(zones, day)* pair.  Returns an empty state when
+             *zones* is empty.
     """
+    if not zones:
+        return {
+            "day": day,
+            "total_workers": 0,
+            "days_since_restock": 0,
+            "next_restock_day": day,
+            "workers": {},
+            "materials": {},
+            "cranes": [],
+        }
+
     rng = random.Random(day)
 
     days_since_restock = (day - 1) % RESTOCK_CYCLE_DAYS
@@ -127,7 +139,7 @@ def run_simulation_tick(
     total_workers = 0
 
     for z in zones:
-        if z["type"] not in ("workers", "building"):
+        if z["type"] != "workers":
             continue
 
         zid = _zone_id(z)
@@ -224,7 +236,7 @@ def detect_conflicts(
     Five conflict categories are checked:
 
     1. **crane_worker_overlap** – crane swing radius intrudes on an
-       adjacent worker / building zone.
+       adjacent worker zone.
     2. **crane_road_blocked** – crane swing arc covers an access road cell.
     3. **worker_density_exceeded** – zone headcount exceeds OSHA limit
        of 25 workers.
@@ -239,7 +251,7 @@ def detect_conflicts(
     zone_by_id = {_zone_id(z): z for z in zones}
     active_cranes = [c for c in state["cranes"] if c["active"]]
 
-    worker_zones = [z for z in zones if z["type"] in ("workers", "building")]
+    worker_zones = [z for z in zones if z["type"] == "workers"]
     road_zones = [z for z in zones if z["type"] == "road"]
 
     # ── 1. Crane swing overlapping worker zones ───────────────────────
