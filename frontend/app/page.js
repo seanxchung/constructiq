@@ -14,23 +14,26 @@ const ZONES = [
 ];
 
 const GRID = 12;
-const TOTAL_DAYS = 365;
+const DEFAULT_DURATION = 90;
 
-const PHASES = [
-  { label: "Foundation", pct: 0 },
-  { label: "Structural", pct: 30 },
-  { label: "MEP", pct: 55 },
-  { label: "Finishing", pct: 80 },
-  { label: "Handover", pct: 100 },
+const DURATION_OPTIONS = [30, 60, 90, 180, 365];
+
+const GANTT_PHASE_DEFS = [
+  { label: "Foundation", refEnd: 110, color: "#3b82f6" },
+  { label: "Structural", refEnd: 200, color: "#8b5cf6" },
+  { label: "MEP", refEnd: 270, color: "#f59e0b" },
+  { label: "Finishing", refEnd: 330, color: "#22c55e" },
+  { label: "Handover", refEnd: 365, color: "#ef4444" },
 ];
 
-const GANTT_PHASES = [
-  { label: "Foundation", start: 1, end: 110, color: "#3b82f6" },
-  { label: "Structural", start: 111, end: 200, color: "#8b5cf6" },
-  { label: "MEP", start: 201, end: 270, color: "#f59e0b" },
-  { label: "Finishing", start: 271, end: 330, color: "#22c55e" },
-  { label: "Handover", start: 331, end: 365, color: "#ef4444" },
-];
+const buildGanttPhases = (totalDays) => {
+  const scaled = GANTT_PHASE_DEFS.map((d, i, arr) => ({
+    label: d.label,
+    end: i === arr.length - 1 ? totalDays : Math.round((d.refEnd / 365) * totalDays),
+    color: d.color,
+  }));
+  return scaled.map((p, i) => ({ ...p, start: i === 0 ? 1 : scaled[i - 1].end + 1 }));
+};
 
 const INITIAL_MESSAGES = [
   { role: "ai", text: "Good morning. I'm Mike Callahan, your AI construction advisor. I've analyzed the site geotechnical report and I'm ready to help you optimize this build from day one." },
@@ -69,6 +72,7 @@ export default function Home() {
   const [activeTab, setActiveTab] = useState("site");
   const [analytics, setAnalytics] = useState([]);
   const [hasNewAlert, setHasNewAlert] = useState(false);
+  const [projectDuration, setProjectDuration] = useState(DEFAULT_DURATION);
   const scrollRef = useRef(null);
   const simulatingRef = useRef(false);
   const skipInProgressRef = useRef(false);
@@ -82,6 +86,17 @@ export default function Home() {
 
   useEffect(() => () => clearTimeout(alertTimerRef.current), []);
 
+  const ganttPhases = buildGanttPhases(projectDuration);
+
+  const handleDurationChange = (dur) => {
+    if (dur === projectDuration) return;
+    setProjectDuration(dur);
+    setIsPlaying(false);
+    setDay(1);
+    setAnalytics([]);
+    setMessages([...INITIAL_MESSAGES]);
+  };
+
   useEffect(() => {
     scrollRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
@@ -90,15 +105,15 @@ export default function Home() {
     if (!isPlaying) return;
     const id = setInterval(() => {
       setDay((d) => {
-        if (d >= TOTAL_DAYS) {
+        if (d >= projectDuration) {
           setIsPlaying(false);
-          return TOTAL_DAYS;
+          return projectDuration;
         }
         return d + 1;
       });
     }, 800);
     return () => clearInterval(id);
-  }, [isPlaying]);
+  }, [isPlaying, projectDuration]);
 
   useEffect(() => {
     if (!isPlaying || day <= 1) return;
@@ -108,7 +123,7 @@ export default function Home() {
     fetch(`${API_BASE}/api/simulate`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ day, zones: buildZones() }),
+      body: JSON.stringify({ day, zones: buildZones(), projectDuration }),
     })
       .then((res) => res.ok ? res.json() : null)
       .then((data) => {
@@ -129,7 +144,7 @@ export default function Home() {
       })
       .catch(() => {})
       .finally(() => { simulatingRef.current = false; });
-  }, [day, isPlaying]);
+  }, [day, isPlaying, projectDuration]);
 
   const buildZones = () =>
     cells.reduce((acc, cell, i) => {
@@ -157,7 +172,7 @@ export default function Home() {
       const res = await fetch(`${API_BASE}/api/ai/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: text, day, zones: buildZones() }),
+        body: JSON.stringify({ message: text, day, zones: buildZones(), projectDuration }),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
@@ -180,13 +195,13 @@ export default function Home() {
   };
 
   const skipDays = (n) => {
-    const target = Math.min(day + n, TOTAL_DAYS);
+    const target = Math.min(day + n, projectDuration);
     skipInProgressRef.current = true;
     setDay(target);
     fetch(`${API_BASE}/api/simulate`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ day: target, zones: buildZones() }),
+      body: JSON.stringify({ day: target, zones: buildZones(), projectDuration }),
     })
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
@@ -214,15 +229,16 @@ export default function Home() {
     setIsPlaying(false);
     setDay(1);
     setAnalytics([]);
+    setMessages([...INITIAL_MESSAGES]);
   };
 
-  const progress = ((day - 1) / (TOTAL_DAYS - 1)) * 100;
+  const progress = ((day - 1) / (projectDuration - 1)) * 100;
   const placedCount = cells.filter(Boolean).length;
   const zoneCounts = ZONES.map((z) => ({
     ...z,
     count: cells.filter((c) => c?.id === z.id).length,
   }));
-  const currentPhase = [...PHASES].reverse().find((p) => progress >= p.pct)?.label ?? "Pre-Construction";
+  const currentPhase = [...ganttPhases].reverse().find((gp) => day >= gp.start)?.label ?? "Pre-Construction";
 
   /* ────────── row / col labels ────────── */
   const colLabels = Array.from({ length: GRID }, (_, i) => String.fromCharCode(65 + i));
@@ -412,7 +428,7 @@ export default function Home() {
           </div>
           </>
           ) : activeTab === "schedule" ? (
-            <ScheduleView analytics={analytics} day={day} currentPhase={currentPhase} />
+            <ScheduleView analytics={analytics} day={day} currentPhase={currentPhase} projectDuration={projectDuration} ganttPhases={ganttPhases} />
           ) : (
             <AnalyticsDashboard analytics={analytics} />
           )}
@@ -438,11 +454,11 @@ export default function Home() {
               <span style={{ fontSize: 15, fontWeight: 700, color: "#f1f5f9" }}>
                 Day {day}
               </span>
-              <span style={{ fontSize: 11, color: "#475569" }}>of {TOTAL_DAYS}</span>
+              <span style={{ fontSize: 11, color: "#475569" }}>of {projectDuration}</span>
             </div>
             <button
               onClick={() => skipDays(7)}
-              disabled={day >= TOTAL_DAYS}
+              disabled={day >= projectDuration}
               style={{
                 ...S.toolBtn,
                 borderColor: "#334155",
@@ -450,32 +466,50 @@ export default function Home() {
                 color: "#94a3b8",
                 fontSize: 11,
                 padding: "5px 10px",
-                opacity: day >= TOTAL_DAYS ? 0.4 : 1,
-                cursor: day >= TOTAL_DAYS ? "not-allowed" : "pointer",
+                opacity: day >= projectDuration ? 0.4 : 1,
+                cursor: day >= projectDuration ? "not-allowed" : "pointer",
               }}
               title="Skip forward 7 days"
             >
               +7 days
             </button>
 
+            <div style={S.durationPicker}>
+              {DURATION_OPTIONS.map((d) => (
+                <button
+                  key={d}
+                  onClick={() => handleDurationChange(d)}
+                  style={{
+                    ...S.durationBtn,
+                    ...(d === projectDuration ? S.durationBtnActive : {}),
+                  }}
+                >
+                  {d}d
+                </button>
+              ))}
+            </div>
+
             <div style={S.progressWrapper}>
               <div style={S.phaseLabels}>
-                {PHASES.map((p) => (
-                  <span
-                    key={p.label}
-                    style={{
-                      fontSize: 10,
-                      color: progress >= p.pct ? "#60a5fa" : "#334155",
-                      fontWeight: progress >= p.pct ? 600 : 400,
-                      position: "absolute",
-                      left: `${p.pct}%`,
-                      transform: "translateX(-50%)",
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    {p.label}
-                  </span>
-                ))}
+                {ganttPhases.map((gp) => {
+                  const pct = ((gp.start - 1) / (projectDuration - 1)) * 100;
+                  return (
+                    <span
+                      key={gp.label}
+                      style={{
+                        fontSize: 10,
+                        color: progress >= pct ? "#60a5fa" : "#334155",
+                        fontWeight: progress >= pct ? 600 : 400,
+                        position: "absolute",
+                        left: `${pct}%`,
+                        transform: "translateX(-50%)",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {gp.label}
+                    </span>
+                  );
+                })}
               </div>
               <div style={S.progressTrack}>
                 <div
@@ -484,12 +518,12 @@ export default function Home() {
                     width: `${progress}%`,
                   }}
                 />
-                {PHASES.slice(1, -1).map((p) => (
+                {ganttPhases.slice(1, -1).map((gp) => (
                   <div
-                    key={p.label}
+                    key={gp.label}
                     style={{
                       position: "absolute",
-                      left: `${p.pct}%`,
+                      left: `${((gp.start - 1) / (projectDuration - 1)) * 100}%`,
                       top: 0,
                       bottom: 0,
                       width: 1,
@@ -820,15 +854,15 @@ function AnalyticsDashboard({ analytics }) {
 
 /* ───────────────────── schedule view ───────────────────── */
 
-function ScheduleView({ analytics, day, currentPhase }) {
+function ScheduleView({ analytics, day, currentPhase, projectDuration, ganttPhases }) {
   const W = 760, H = 280;
   const P = { t: 32, r: 20, b: 36, l: 110 };
   const iW = W - P.l - P.r;
   const iH = H - P.t - P.b;
-  const barH = iH / GANTT_PHASES.length;
+  const barH = iH / ganttPhases.length;
   const barPad = 6;
 
-  const dayToX = (d) => P.l + ((d - 1) / (TOTAL_DAYS - 1)) * iW;
+  const dayToX = (d) => P.l + ((d - 1) / (projectDuration - 1)) * iW;
   const todayX = dayToX(day);
 
   const conflictDays = analytics
@@ -871,8 +905,10 @@ function ScheduleView({ analytics, day, currentPhase }) {
     },
   ];
 
-  const monthTicks = [1, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334, 365];
-  const monthLabels = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec", ""];
+  const tickInterval = projectDuration <= 30 ? 5 : projectDuration <= 60 ? 10 : projectDuration <= 90 ? 15 : 30;
+  const ticks = [];
+  for (let d = 1; d <= projectDuration; d += tickInterval) ticks.push(d);
+  if (ticks[ticks.length - 1] !== projectDuration) ticks.push(projectDuration);
 
   return (
     <div style={{ flex: 1, overflow: "auto", background: "#080c18", padding: "20px 24px", display: "flex", flexDirection: "column", gap: 16 }}>
@@ -880,10 +916,10 @@ function ScheduleView({ analytics, day, currentPhase }) {
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <div>
           <div style={{ fontSize: 16, fontWeight: 700, color: "#f1f5f9", marginBottom: 2 }}>Project Schedule</div>
-          <div style={{ fontSize: 12, color: "#475569" }}>365-day construction timeline — Day {day}</div>
+          <div style={{ fontSize: 12, color: "#475569" }}>{projectDuration}-day construction timeline — Day {day}</div>
         </div>
         <div style={{ display: "flex", gap: 12 }}>
-          {GANTT_PHASES.map((p) => (
+          {ganttPhases.map((p) => (
             <div key={p.label} style={{ display: "flex", alignItems: "center", gap: 5 }}>
               <div style={{ width: 10, height: 10, borderRadius: 3, background: p.color }} />
               <span style={{ fontSize: 11, color: "#64748b" }}>{p.label}</span>
@@ -895,21 +931,19 @@ function ScheduleView({ analytics, day, currentPhase }) {
       {/* Gantt Chart */}
       <div style={{ background: "#0f1520", borderRadius: 10, border: "1px solid #1e293b", padding: "16px 18px" }}>
         <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ display: "block" }}>
-          {/* Month gridlines + labels */}
-          {monthTicks.map((d, i) => {
+          {/* Timeline gridlines + labels */}
+          {ticks.map((d) => {
             const x = dayToX(d);
             return (
               <g key={d}>
                 <line x1={x} y1={P.t - 4} x2={x} y2={P.t + iH} stroke="#1e293b" strokeWidth="1" />
-                {monthLabels[i] && (
-                  <text x={x + 4} y={P.t + iH + 14} fill="#475569" fontSize="9" fontFamily="monospace">{monthLabels[i]}</text>
-                )}
+                <text x={x} y={P.t + iH + 14} fill="#475569" fontSize="9" fontFamily="monospace" textAnchor="middle">{d}</text>
               </g>
             );
           })}
 
           {/* Phase bars */}
-          {GANTT_PHASES.map((phase, i) => {
+          {ganttPhases.map((phase, i) => {
             const x1 = dayToX(phase.start);
             const x2 = dayToX(phase.end);
             const y = P.t + i * barH + barPad;
@@ -979,7 +1013,7 @@ function ScheduleView({ analytics, day, currentPhase }) {
           {/* Conflict markers */}
           {conflictDays.map((cd, i) => {
             const cx = dayToX(cd);
-            const phaseIdx = GANTT_PHASES.findIndex((p) => cd >= p.start && cd <= p.end);
+            const phaseIdx = ganttPhases.findIndex((p) => cd >= p.start && cd <= p.end);
             if (phaseIdx < 0) return null;
             const cy = P.t + phaseIdx * barH + barPad - 5;
             return (
@@ -1278,6 +1312,34 @@ const S = {
     gap: 1,
     minWidth: 64,
     flexShrink: 0,
+  },
+  durationPicker: {
+    display: "flex",
+    alignItems: "center",
+    background: "#0c1221",
+    borderRadius: 7,
+    border: "1px solid #1e293b",
+    padding: 2,
+    gap: 2,
+    flexShrink: 0,
+  },
+  durationBtn: {
+    fontSize: 11,
+    fontWeight: 600,
+    color: "#475569",
+    background: "transparent",
+    border: "none",
+    borderRadius: 5,
+    padding: "4px 8px",
+    cursor: "pointer",
+    fontFamily: "inherit",
+    transition: "all 0.15s ease",
+    lineHeight: 1,
+  },
+  durationBtnActive: {
+    background: "#1d4ed8",
+    color: "#e2e8f0",
+    boxShadow: "0 0 8px #3b82f630",
   },
   progressWrapper: {
     flex: 1,
