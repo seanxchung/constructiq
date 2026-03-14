@@ -23,15 +23,7 @@ const PHASES = [
   { label: "Handover", pct: 100 },
 ];
 
-const AI_REPLIES = [
-  "I've analyzed your layout. The crane placement provides 85% site coverage — consider shifting it 2 cells east to reach the northwest material zone.",
-  "Good call on that road placement. Delivery trucks can now access the staging area with a single turn, reducing unload time by ~20%.",
-  "I'm detecting a potential safety conflict: the crane swing radius overlaps with your worker zone in sector D-7. Recommend a 2-cell buffer.",
-  "Current resource allocation looks strong. At this pace, you're tracking 4 days ahead of the Primavera P6 baseline schedule.",
-  "Based on Trimble's project data, similar configurations achieve optimal throughput with materials staged within 3 cells of the active building zone.",
-  "I'd recommend scheduling concrete pours in sectors A-3 through A-6 during the morning shift to avoid thermal cracking in the afternoon heat.",
-  "Your worker distribution is unbalanced — the east wing has 3× the labor density of the west. Rebalancing could boost productivity by 12%.",
-];
+const API_BASE = "http://localhost:8000";
 
 /* ───────────────────── component ───────────────────── */
 
@@ -45,8 +37,10 @@ export default function Home() {
     { role: "ai", text: "Recommendation: Start by laying Access Roads along the perimeter for logistics flow, then position Cranes for maximum lift coverage. I'll flag conflicts in real-time." },
   ]);
   const [draft, setDraft] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
   const [hoveredCell, setHoveredCell] = useState(-1);
   const scrollRef = useRef(null);
+  const simulatingRef = useRef(false);
 
   useEffect(() => {
     scrollRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -66,6 +60,26 @@ export default function Home() {
     return () => clearInterval(id);
   }, [isPlaying]);
 
+  useEffect(() => {
+    if (!isPlaying || day <= 1) return;
+    if (simulatingRef.current) return;
+    simulatingRef.current = true;
+
+    fetch(`${API_BASE}/api/simulate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ day, zones: [] }),
+    })
+      .then((res) => res.ok ? res.json() : null)
+      .then((data) => {
+        if (data?.conflicts?.length > 0 && data.ai_analysis) {
+          setMessages((m) => [...m, { role: "ai", text: data.ai_analysis }]);
+        }
+      })
+      .catch(() => {})
+      .finally(() => { simulatingRef.current = false; });
+  }, [day, isPlaying]);
+
   const placeZone = (i) => {
     if (!activeTool) return;
     setCells((prev) => {
@@ -76,17 +90,29 @@ export default function Home() {
     });
   };
 
-  const sendMessage = () => {
-    const text = draft.trim();
-    if (!text) return;
+  const sendMessage = async (overrideText) => {
+    const text = (overrideText || draft).trim();
+    if (!text || isLoading) return;
     setMessages((m) => [...m, { role: "user", text }]);
     setDraft("");
-    setTimeout(() => {
+    setIsLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/ai/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: text, day, zones: [] }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      setMessages((m) => [...m, { role: "ai", text: data.reply }]);
+    } catch {
       setMessages((m) => [
         ...m,
-        { role: "ai", text: AI_REPLIES[Math.floor(Math.random() * AI_REPLIES.length)] },
+        { role: "ai", text: "Sorry, I'm having trouble connecting to the server. Please check that the backend is running and try again." },
       ]);
-    }, 600 + Math.random() * 600);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const progress = ((day - 1) / (TOTAL_DAYS - 1)) * 100;
@@ -366,20 +392,13 @@ export default function Home() {
             {["Site analysis", "Risk report", "Schedule review"].map((q) => (
               <button
                 key={q}
-                onClick={() => {
-                  setDraft(q);
-                  setTimeout(() => {
-                    setMessages((m) => [...m, { role: "user", text: q }]);
-                    setDraft("");
-                    setTimeout(() => {
-                      setMessages((m) => [
-                        ...m,
-                        { role: "ai", text: AI_REPLIES[Math.floor(Math.random() * AI_REPLIES.length)] },
-                      ]);
-                    }, 700);
-                  }, 100);
+                onClick={() => sendMessage(q)}
+                disabled={isLoading}
+                style={{
+                  ...S.quickBtn,
+                  opacity: isLoading ? 0.5 : 1,
+                  cursor: isLoading ? "not-allowed" : "pointer",
                 }}
-                style={S.quickBtn}
               >
                 {q}
               </button>
@@ -427,10 +446,22 @@ export default function Home() {
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && sendMessage()}
-              placeholder="Ask Mike anything..."
-              style={S.input}
+              placeholder={isLoading ? "Mike is thinking..." : "Ask Mike anything..."}
+              disabled={isLoading}
+              style={{
+                ...S.input,
+                opacity: isLoading ? 0.6 : 1,
+              }}
             />
-            <button onClick={sendMessage} style={S.sendBtn}>
+            <button
+              onClick={sendMessage}
+              disabled={isLoading}
+              style={{
+                ...S.sendBtn,
+                opacity: isLoading ? 0.5 : 1,
+                cursor: isLoading ? "not-allowed" : "pointer",
+              }}
+            >
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                 <line x1="22" y1="2" x2="11" y2="13" />
                 <polygon points="22 2 15 22 11 13 2 9 22 2" />
