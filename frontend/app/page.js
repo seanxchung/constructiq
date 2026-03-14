@@ -123,7 +123,7 @@ export default function Home() {
     fetch(`${API_BASE}/api/simulate`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ day, zones: buildZones(), projectDuration }),
+      body: JSON.stringify({ day, zones: buildZones(), project_duration: projectDuration }),
     })
       .then((res) => res.ok ? res.json() : null)
       .then((data) => {
@@ -134,6 +134,8 @@ export default function Home() {
             totalWorkers: data.simulation?.total_workers || 0,
             materials: Object.values(data.simulation?.materials || {}).map((m) => ({ name: m.name, pct: m.pct_remaining })),
             costImpact: (data.conflicts || []).reduce((s, c) => s + (c.cost_impact || 0), 0),
+            activeTasks: data.simulation?.active_tasks,
+            scheduleRisk: data.simulation?.schedule?.schedule_risk,
           }]);
         }
         const hasHigh = (data?.conflicts || []).some((c) => c.severity === "HIGH");
@@ -172,7 +174,7 @@ export default function Home() {
       const res = await fetch(`${API_BASE}/api/ai/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: text, day, zones: buildZones(), projectDuration }),
+        body: JSON.stringify({ message: text, day, zones: buildZones(), project_duration: projectDuration }),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
@@ -201,7 +203,7 @@ export default function Home() {
     fetch(`${API_BASE}/api/simulate`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ day: target, zones: buildZones(), projectDuration }),
+      body: JSON.stringify({ day: target, zones: buildZones(), project_duration: projectDuration }),
     })
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
@@ -212,6 +214,8 @@ export default function Home() {
             totalWorkers: data.simulation?.total_workers || 0,
             materials: Object.values(data.simulation?.materials || {}).map((m) => ({ name: m.name, pct: m.pct_remaining })),
             costImpact: (data.conflicts || []).reduce((s, c) => s + (c.cost_impact || 0), 0),
+            activeTasks: data.simulation?.active_tasks,
+            scheduleRisk: data.simulation?.schedule?.schedule_risk,
           }]);
         }
         const hasHigh = (data?.conflicts || []).some((c) => c.severity === "HIGH");

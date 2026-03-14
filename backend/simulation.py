@@ -1,44 +1,175 @@
 """ConstructIQ — Construction Site Simulation Engine
 
-Deterministic per-day simulation of construction site activity with
-automated conflict detection aligned to OSHA safety standards.
+Critical-path-driven, day-by-day simulation of a mid-rise commercial
+building / data center construction project.  Models task dependencies,
+crew allocation, material consumption, equipment status, and schedule
+risk using forward/backward-pass CPM scheduling.
 
-Accepts simplified frontend zones: {type, x, y, capacity, metadata}.
-Zone types: "crane", "workers", "materials", "road", "building".
-Coordinates are grid-cell indices on a 12×12 board.
+Zone types from the frontend grid: "crane", "workers", "materials",
+"road", "building".  Zones represent WHERE work happens on the 12×12
+board; tasks represent WHAT happens and WHEN.
 """
 
 from __future__ import annotations
 
 import math
 import random
+from copy import deepcopy
 from typing import Any
 
-# ── Simulation constants ─────────────────────────────────────────────────────
+# ── Phase ordering ────────────────────────────────────────────────────────────
+
+PHASES = (
+    "site_prep", "foundation", "structure", "mep", "finishing", "commissioning",
+)
+
+# ── 1. Task Dependency Engine ─────────────────────────────────────────────────
+#
+# Each task models a real construction activity for a mid-rise commercial
+# build.  `duration_days` is the *base* duration before project-duration
+# scaling.  `depends_on` encodes hard finish-to-start dependencies.
+
+BASE_TASKS: list[dict[str, Any]] = [
+    {
+        "name": "Site Preparation",
+        "duration_days": 5,
+        "depends_on": [],
+        "required_crew": {"laborer": 6},
+        "required_materials": {},
+        "phase": "site_prep",
+    },
+    {
+        "name": "Excavation",
+        "duration_days": 8,
+        "depends_on": ["Site Preparation"],
+        "required_crew": {"equipment_operator": 3, "laborer": 4},
+        "required_materials": {},
+        "phase": "site_prep",
+    },
+    {
+        "name": "Foundation Forming",
+        "duration_days": 10,
+        "depends_on": ["Excavation"],
+        "required_crew": {"carpenter": 6, "laborer": 4},
+        "required_materials": {"lumber": 80},
+        "phase": "foundation",
+    },
+    {
+        "name": "Rebar Placement",
+        "duration_days": 7,
+        "depends_on": ["Foundation Forming"],
+        "required_crew": {"ironworker": 5},
+        "required_materials": {"rebar": 4},
+        "phase": "foundation",
+    },
+    {
+        "name": "Concrete Pour",
+        "duration_days": 4,
+        "depends_on": ["Rebar Placement"],
+        "required_crew": {"laborer": 8},
+        "required_materials": {"concrete": 30},
+        "phase": "foundation",
+    },
+    {
+        "name": "Concrete Cure",
+        "duration_days": 7,
+        "depends_on": ["Concrete Pour"],
+        "required_crew": {},
+        "required_materials": {},
+        "phase": "foundation",
+    },
+    {
+        "name": "Steel Erection",
+        "duration_days": 15,
+        "depends_on": ["Concrete Cure"],
+        "required_crew": {"ironworker": 6, "crane_operator": 2},
+        "required_materials": {"structural_steel": 5},
+        "phase": "structure",
+    },
+    {
+        "name": "Exterior Envelope",
+        "duration_days": 12,
+        "depends_on": ["Steel Erection"],
+        "required_crew": {"mason": 4, "carpenter": 4},
+        "required_materials": {"lumber": 60, "masonry": 40},
+        "phase": "structure",
+    },
+    {
+        "name": "MEP Rough-In",
+        "duration_days": 18,
+        "depends_on": ["Steel Erection"],
+        "required_crew": {"electrician": 5, "plumber": 4},
+        "required_materials": {"conduit": 70, "copper_pipe": 80},
+        "phase": "mep",
+    },
+    {
+        "name": "Interior Framing",
+        "duration_days": 10,
+        "depends_on": ["MEP Rough-In"],
+        "required_crew": {"carpenter": 6},
+        "required_materials": {"lumber": 90},
+        "phase": "finishing",
+    },
+    {
+        "name": "Finishing",
+        "duration_days": 14,
+        "depends_on": ["Interior Framing"],
+        "required_crew": {"carpenter": 3, "electrician": 2, "plumber": 2, "painter": 4},
+        "required_materials": {"lumber": 30, "conduit": 20, "copper_pipe": 15},
+        "phase": "finishing",
+    },
+    {
+        "name": "Commissioning",
+        "duration_days": 7,
+        "depends_on": ["Finishing"],
+        "required_crew": {"specialist": 3},
+        "required_materials": {},
+        "phase": "commissioning",
+    },
+]
+
+# ── Zone / site constants ─────────────────────────────────────────────────────
 
 OSHA_MAX_WORKERS_PER_ZONE = 25
-MATERIAL_LOW_THRESHOLD_PCT = 0.20
+CRANE_SWING_RADIUS = 1.5        # grid cells
+CRANE_SAFETY_BUFFER = 0.5       # grid cells
+EQUIPMENT_BREAKDOWN_PROB = 0.02  # per crane per day
+WEEKEND_CREW_FACTOR = 0.20
 RESTOCK_CYCLE_DAYS = 14
-TARGET_CAPACITY_PCT = 0.80
-CRANE_SWING_RADIUS = 1.5       # grid cells
-CRANE_SAFETY_BUFFER = 0.5      # grid cells
+MATERIAL_LOW_THRESHOLD_PCT = 0.20
 
-WORKER_ROLES = [
-    "Ironworker", "Carpenter", "Electrician", "Plumber",
-    "Equipment Operator", "Laborer", "Mason", "Welder",
-    "Sheet Metal Worker", "Foreman",
-]
+MATERIAL_CATALOG: dict[str, dict[str, Any]] = {
+    "concrete":         {"name": "Ready-Mix Concrete",       "unit": "m³",       "max_stock": 500},
+    "rebar":            {"name": "Steel Rebar (#5 bar)",     "unit": "tons",     "max_stock": 80},
+    "structural_steel": {"name": "Structural Steel (W-beams)", "unit": "tons",   "max_stock": 120},
+    "conduit":          {"name": "EMT Conduit (3/4\")",      "unit": "sticks",   "max_stock": 1500},
+    "copper_pipe":      {"name": "Copper Pipe (Type L)",     "unit": "m",        "max_stock": 2000},
+    "lumber":           {"name": "Lumber (2×4 SPF)",         "unit": "board-ft", "max_stock": 3000},
+    "masonry":          {"name": "CMU Block (8\")",          "unit": "units",    "max_stock": 5000},
+}
 
-MATERIAL_TEMPLATES = [
-    {"name": "Ready-Mix Concrete", "unit": "m³", "max_quantity": 500, "daily_usage": 32},
-    {"name": "Steel Rebar (#5 bar)", "unit": "tons", "max_quantity": 80, "daily_usage": 4.5},
-    {"name": "Structural Steel (W-beams)", "unit": "tons", "max_quantity": 120, "daily_usage": 6.0},
-    {"name": "EMT Conduit (3/4\")", "unit": "sticks", "max_quantity": 1500, "daily_usage": 85},
-    {"name": "Copper Pipe (Type L)", "unit": "m", "max_quantity": 2000, "daily_usage": 95},
-    {"name": "Lumber (2×4 SPF)", "unit": "board-ft", "max_quantity": 3000, "daily_usage": 110},
-]
+DEFAULT_CREW_POOL: dict[str, int] = {
+    "laborer": 12,
+    "carpenter": 8,
+    "ironworker": 6,
+    "electrician": 6,
+    "plumber": 5,
+    "mason": 4,
+    "equipment_operator": 4,
+    "crane_operator": 3,
+    "painter": 4,
+    "specialist": 3,
+}
 
-# ── Helpers ──────────────────────────────────────────────────────────────────
+DEFAULT_PROJECT_CONFIG: dict[str, Any] = {
+    "project_duration": 180,
+    "crew_size": DEFAULT_CREW_POOL,
+    "daily_budget": 45_000.0,
+    "project_type": "commercial",
+}
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
 
 def _dist(x1: float, y1: float, x2: float, y2: float) -> float:
     return math.hypot(x2 - x1, y2 - y1)
@@ -46,13 +177,6 @@ def _dist(x1: float, y1: float, x2: float, y2: float) -> float:
 
 def _usd(amount: float) -> int:
     return int(round(amount))
-
-
-def _tally(items: list[str]) -> dict[str, int]:
-    counts: dict[str, int] = {}
-    for item in items:
-        counts[item] = counts.get(item, 0) + 1
-    return counts
 
 
 def _zone_id(z: dict) -> str:
@@ -72,185 +196,665 @@ def _zone_label(z: dict) -> str:
     return f"{labels.get(z['type'], z['type'])} ({col}{row})"
 
 
-# ── 1. run_simulation_tick ───────────────────────────────────────────────────
+def _is_weekend(day: int) -> bool:
+    return (day % 7) in (0, 6)
+
+
+# ── Task scaling ──────────────────────────────────────────────────────────────
+
+
+def _base_critical_path_length(tasks: list[dict]) -> int:
+    """Quick forward pass to get the makespan of unscaled tasks."""
+    by_name = {t["name"]: t for t in tasks}
+    cache: dict[str, int] = {}
+
+    def _ef(name: str) -> int:
+        if name in cache:
+            return cache[name]
+        t = by_name[name]
+        es = max((_ef(dep) for dep in t["depends_on"]), default=0)
+        cache[name] = es + t["duration_days"]
+        return cache[name]
+
+    return max(_ef(t["name"]) for t in tasks)
+
+
+def scale_tasks(base_tasks: list[dict], project_duration: int) -> list[dict]:
+    """Scale task durations proportionally to fit *project_duration*.
+
+    The base schedule has a ~105-day critical path.  A longer project
+    stretches durations; a shorter one compresses them (floor of 1 day
+    per task, minimum 3 days for Concrete Cure — physics doesn't scale).
+    """
+    base_cp = _base_critical_path_length(base_tasks)
+    if base_cp <= 0:
+        return deepcopy(base_tasks)
+
+    scale = project_duration / base_cp
+    scaled: list[dict] = []
+    for t in base_tasks:
+        task = deepcopy(t)
+        raw = t["duration_days"] * scale
+        if t["name"] == "Concrete Cure":
+            task["duration_days"] = max(3, round(raw))
+        else:
+            task["duration_days"] = max(1, round(raw))
+        scaled.append(task)
+    return scaled
+
+
+# ── 2. Critical Path Calculation ──────────────────────────────────────────────
+
+
+def calculate_critical_path(
+    tasks: list[dict[str, Any]],
+    project_duration: int,
+) -> dict[str, Any]:
+    """CPM forward/backward pass over the task network.
+
+    Returns
+    -------
+    dict with keys:
+        schedule         – list of task dicts augmented with ES, EF, LS, LF, float
+        critical_path    – ordered list of task names with zero total float
+        makespan         – total computed duration (days)
+        schedule_risk    – True when makespan > project_duration
+        overrun_days     – how many days over budget (0 if on time)
+    """
+    scaled = scale_tasks(tasks, project_duration)
+    by_name: dict[str, dict] = {t["name"]: t for t in scaled}
+
+    # --- Forward pass (earliest start / finish) ---
+    es: dict[str, int] = {}
+    ef: dict[str, int] = {}
+
+    def _forward(name: str) -> int:
+        if name in ef:
+            return ef[name]
+        t = by_name[name]
+        es[name] = max((_forward(dep) for dep in t["depends_on"]), default=0)
+        ef[name] = es[name] + t["duration_days"]
+        return ef[name]
+
+    for t in scaled:
+        _forward(t["name"])
+
+    makespan = max(ef.values()) if ef else 0
+
+    # --- Backward pass (latest start / finish) ---
+    successors: dict[str, list[str]] = {t["name"]: [] for t in scaled}
+    for t in scaled:
+        for dep in t["depends_on"]:
+            successors[dep].append(t["name"])
+
+    lf: dict[str, int] = {}
+    ls: dict[str, int] = {}
+
+    def _backward(name: str) -> int:
+        if name in ls:
+            return ls[name]
+        t = by_name[name]
+        if not successors[name]:
+            lf[name] = makespan
+        else:
+            lf[name] = min(_backward(s) for s in successors[name])
+        ls[name] = lf[name] - t["duration_days"]
+        return ls[name]
+
+    for t in scaled:
+        _backward(t["name"])
+
+    # --- Build augmented schedule with float ---
+    schedule: list[dict[str, Any]] = []
+    critical_path_names: list[str] = []
+
+    for t in scaled:
+        name = t["name"]
+        total_float = ls[name] - es[name]
+        is_critical = total_float == 0
+        if is_critical:
+            critical_path_names.append(name)
+        schedule.append({
+            **t,
+            "earliest_start": es[name],
+            "earliest_finish": ef[name],
+            "latest_start": ls[name],
+            "latest_finish": lf[name],
+            "total_float": total_float,
+            "is_critical": is_critical,
+        })
+
+    critical_path_names.sort(key=lambda n: es[n])
+    overrun = max(0, makespan - project_duration)
+    # Tolerate up to 2 days of rounding drift from duration scaling
+    rounding_tolerance = 2
+
+    return {
+        "schedule": schedule,
+        "critical_path": critical_path_names,
+        "makespan": makespan,
+        "schedule_risk": overrun > rounding_tolerance,
+        "overrun_days": overrun,
+    }
+
+
+# ── 3. Daily Simulation Tick ──────────────────────────────────────────────────
+
 
 def run_simulation_tick(
     zones: list[dict[str, Any]],
     day: int,
+    project_duration: int = 180,
+    project_config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Simulate one calendar day of construction site activity.
+    """Simulate one calendar day of construction activity.
 
-    Workers fill each worker zone to ~80% of capacity (with daily
-    variance and occasional surges).  Materials deplete every day and
-    restock every 14 days.  Cranes are tracked as active / inactive.
-
-    Parameters
-    ----------
-    zones : list[dict]
-        Simplified frontend zones — each dict has keys
-        ``type``, ``x``, ``y``, ``capacity``, ``metadata``.
-    day : int, 1-indexed
-        The calendar day to simulate.
-
-    Returns
-    -------
-    dict  –  Full site state keyed by ``workers``, ``materials``,
-             ``cranes``, plus summary fields.  Deterministic for any
-             given *(zones, day)* pair.  Returns an empty state when
-             *zones* is empty.
+    Combines task-driven scheduling (what's happening, who's needed,
+    what materials are consumed) with zone-based site state (where
+    things are physically located on the grid).
     """
+    config = {**DEFAULT_PROJECT_CONFIG, **(project_config or {})}
+    config["project_duration"] = project_duration
+    crew_pool = config.get("crew_size", DEFAULT_CREW_POOL)
+
     if not zones:
-        return {
-            "day": day,
-            "total_workers": 0,
-            "days_since_restock": 0,
-            "next_restock_day": day,
-            "workers": {},
-            "materials": {},
-            "cranes": [],
-        }
+        return _empty_state(day, config)
 
-    rng = random.Random(day)
+    rng = random.Random(day * 31 + len(zones))
+    cp_result = calculate_critical_path(BASE_TASKS, project_duration)
+    schedule = cp_result["schedule"]
 
+    # --- Active tasks for this day (ES < day <= EF) ---
+    active_tasks: list[dict[str, Any]] = []
+    for task in schedule:
+        if task["earliest_start"] < day <= task["earliest_finish"]:
+            active_tasks.append(task)
+
+    current_phase = _determine_phase(active_tasks, day, schedule)
+
+    # --- Crew demand from active tasks ---
+    crew_required: dict[str, int] = {}
+    for task in active_tasks:
+        for role, count in task["required_crew"].items():
+            crew_required[role] = crew_required.get(role, 0) + count
+
+    # Apply weekend modifier, then cap at available pool
+    weekend = _is_weekend(day)
+    crew_on_site: dict[str, int] = {}
+    for role, needed in crew_required.items():
+        if weekend:
+            needed = max(1, round(needed * WEEKEND_CREW_FACTOR))
+        available = crew_pool.get(role, 0)
+        crew_on_site[role] = min(needed, available)
+
+    total_workers = sum(crew_on_site.values())
+
+    # --- Material consumption ---
+    materials_consumed: dict[str, float] = {}
+    for task in active_tasks:
+        for mat, units_per_day in task["required_materials"].items():
+            factor = WEEKEND_CREW_FACTOR if weekend else 1.0
+            materials_consumed[mat] = (
+                materials_consumed.get(mat, 0) + units_per_day * factor
+            )
+
+    # --- Material inventory at yard zones ---
     days_since_restock = (day - 1) % RESTOCK_CYCLE_DAYS
     next_restock = RESTOCK_CYCLE_DAYS - days_since_restock
+    material_inventory = _build_material_inventory(
+        zones, day, materials_consumed, days_since_restock, next_restock, rng,
+    )
 
-    # ── Workers ───────────────────────────────────────────────────────
-    workers: dict[str, Any] = {}
-    total_workers = 0
+    # --- Crane / equipment status ---
+    crane_needed = any("crane_operator" in t["required_crew"] for t in active_tasks)
+    cranes = _build_crane_status(zones, crane_needed, rng)
 
-    for z in zones:
-        if z["type"] != "workers":
-            continue
+    equipment_events: list[dict[str, Any]] = []
+    for crane in cranes:
+        if crane["breakdown"]:
+            equipment_events.append({
+                "equipment": crane["id"],
+                "event": "breakdown",
+                "impact": "critical" if crane_needed else "none",
+            })
 
-        zid = _zone_id(z)
-        cap = z.get("capacity", OSHA_MAX_WORKERS_PER_ZONE)
-        target = int(cap * TARGET_CAPACITY_PCT)
-        variance = max(1, target // 6)
-        count = target + rng.randint(-variance, variance)
+    # --- Distribute workers to physical zones ---
+    workers = _distribute_workers_to_zones(zones, crew_on_site, rng)
 
-        if rng.random() < 0.18:
-            count += rng.randint(3, 10)
-        count = max(0, count)
+    return {
+        "day": day,
+        "project_duration": project_duration,
+        "phase": current_phase,
+        "weekend": weekend,
+        "total_workers": total_workers,
+        "active_tasks": [
+            {
+                "name": t["name"],
+                "phase": t["phase"],
+                "is_critical": t["is_critical"],
+                "earliest_start": t["earliest_start"],
+                "earliest_finish": t["earliest_finish"],
+            }
+            for t in active_tasks
+        ],
+        "crew_on_site": crew_on_site,
+        "crew_required": crew_required,
+        "materials_consumed": {k: round(v, 1) for k, v in materials_consumed.items()},
+        "equipment_status": cranes,
+        "equipment_events": equipment_events,
+        "days_since_restock": days_since_restock,
+        "next_restock_day": day + next_restock,
+        "schedule": {
+            "makespan": cp_result["makespan"],
+            "critical_path": cp_result["critical_path"],
+            "schedule_risk": cp_result["schedule_risk"],
+            "overrun_days": cp_result["overrun_days"],
+        },
+        # Backward-compatible keys consumed by frontend + AI agent
+        "workers": workers,
+        "materials": material_inventory,
+        "cranes": list(cranes),
+    }
 
-        role_pool = rng.sample(
-            WORKER_ROLES, k=min(len(WORKER_ROLES), max(count, 1)),
+
+def _empty_state(day: int, config: dict) -> dict[str, Any]:
+    return {
+        "day": day,
+        "project_duration": config["project_duration"],
+        "phase": "pre_construction",
+        "weekend": _is_weekend(day),
+        "total_workers": 0,
+        "active_tasks": [],
+        "crew_on_site": {},
+        "crew_required": {},
+        "materials_consumed": {},
+        "equipment_status": [],
+        "equipment_events": [],
+        "days_since_restock": 0,
+        "next_restock_day": day,
+        "schedule": {
+            "makespan": 0,
+            "critical_path": [],
+            "schedule_risk": False,
+            "overrun_days": 0,
+        },
+        "workers": {},
+        "materials": {},
+        "cranes": [],
+    }
+
+
+def _determine_phase(
+    active_tasks: list[dict],
+    day: int,
+    schedule: list[dict],
+) -> str:
+    if active_tasks:
+        phase_rank = {p: i for i, p in enumerate(PHASES)}
+        return max(
+            (t["phase"] for t in active_tasks),
+            key=lambda p: phase_rank.get(p, 0),
         )
-        roles = [rng.choice(role_pool) for _ in range(count)]
+    if schedule and day > max(t["earliest_finish"] for t in schedule):
+        return "complete"
+    return "pre_construction"
 
-        workers[zid] = {
-            "count": count,
-            "roles": _tally(roles),
-        }
-        total_workers += count
 
-    # ── Materials ─────────────────────────────────────────────────────
-    materials: dict[str, Any] = {}
+def _build_material_inventory(
+    zones: list[dict],
+    day: int,
+    consumption: dict[str, float],
+    days_since_restock: int,
+    next_restock: int,
+    rng: random.Random,
+) -> dict[str, Any]:
+    """Track material inventory across material-yard zones."""
+    mat_zones = [z for z in zones if z["type"] == "materials"]
+    if not mat_zones:
+        return {}
 
-    for z in zones:
-        if z["type"] != "materials":
-            continue
+    inventory: dict[str, Any] = {}
+    mat_keys = list(MATERIAL_CATALOG.keys())
 
+    for i, z in enumerate(mat_zones):
         zid = _zone_id(z)
-        template = MATERIAL_TEMPLATES[
-            (int(z["x"]) + int(z["y"]) * 7) % len(MATERIAL_TEMPLATES)
-        ]
+        assigned = [k for j, k in enumerate(mat_keys)
+                     if j % max(1, len(mat_zones)) == i]
+        if not assigned:
+            assigned = [mat_keys[i % len(mat_keys)]]
 
-        consumed = template["daily_usage"] * days_since_restock
-        noise = rng.uniform(
-            -template["daily_usage"] * 0.10,
-             template["daily_usage"] * 0.10,
-        )
-        quantity = max(0.0, template["max_quantity"] - consumed + noise)
-        pct = (quantity / template["max_quantity"] * 100) if template["max_quantity"] else 0
+        for mat_key in assigned:
+            cat = MATERIAL_CATALOG[mat_key]
+            daily_use = consumption.get(mat_key, 0)
+            cumulative = daily_use * days_since_restock
+            noise = rng.uniform(-daily_use * 0.1, daily_use * 0.1) if daily_use > 0 else 0
+            quantity = max(0.0, cat["max_stock"] - cumulative + noise)
+            pct = (quantity / cat["max_stock"] * 100) if cat["max_stock"] else 0
 
-        mat_id = f"mat-{zid}"
-        materials[mat_id] = {
-            "name": template["name"],
-            "unit": template["unit"],
-            "quantity": round(quantity, 1),
-            "max_quantity": template["max_quantity"],
-            "daily_usage": template["daily_usage"],
-            "pct_remaining": round(pct, 1),
-            "days_until_restock": next_restock,
-            "zone_id": zid,
-        }
+            mat_id = f"mat-{zid}-{mat_key}"
+            inventory[mat_id] = {
+                "name": cat["name"],
+                "key": mat_key,
+                "unit": cat["unit"],
+                "quantity": round(quantity, 1),
+                "max_quantity": cat["max_stock"],
+                "daily_usage": round(daily_use, 1),
+                "pct_remaining": round(pct, 1),
+                "days_until_restock": next_restock,
+                "zone_id": zid,
+            }
 
-    # ── Cranes ────────────────────────────────────────────────────────
+    return inventory
+
+
+def _build_crane_status(
+    zones: list[dict],
+    crane_needed: bool,
+    rng: random.Random,
+) -> list[dict[str, Any]]:
     cranes: list[dict[str, Any]] = []
-
     for z in zones:
         if z["type"] != "crane":
             continue
-
         zid = _zone_id(z)
+        col = chr(65 + int(z["x"]))
+        row = int(z["y"]) + 1
+        broken = rng.random() < EQUIPMENT_BREAKDOWN_PROB
         cranes.append({
             "id": zid,
-            "name": f"Crane ({chr(65 + int(z['x']))}{int(z['y']) + 1})",
+            "name": f"Crane ({col}{row})",
             "x": z["x"],
             "y": z["y"],
             "swing_radius": CRANE_SWING_RADIUS,
             "zone_id": zid,
-            "active": rng.random() < 0.85,
+            "active": not broken,
+            "needed": crane_needed,
+            "breakdown": broken,
         })
-
-    return {
-        "day": day,
-        "total_workers": total_workers,
-        "days_since_restock": days_since_restock,
-        "next_restock_day": day + next_restock,
-        "workers": workers,
-        "materials": materials,
-        "cranes": cranes,
-    }
+    return cranes
 
 
-# ── 2. detect_conflicts ─────────────────────────────────────────────────────
+def _distribute_workers_to_zones(
+    zones: list[dict],
+    crew: dict[str, int],
+    rng: random.Random,
+) -> dict[str, Any]:
+    """Map task-driven crew counts to physical worker zones on the grid."""
+    worker_zones = [z for z in zones if z["type"] == "workers"]
+    if not worker_zones or not crew:
+        return {}
+
+    total = sum(crew.values())
+    workers: dict[str, Any] = {}
+
+    for idx, z in enumerate(worker_zones):
+        zid = _zone_id(z)
+        if idx < len(worker_zones) - 1:
+            share = max(0, total // len(worker_zones) + rng.randint(-2, 2))
+        else:
+            already = sum(w["count"] for w in workers.values())
+            share = max(0, total - already)
+
+        role_counts: dict[str, int] = {}
+        for role, n in crew.items():
+            per_zone = max(1, round(n / len(worker_zones)))
+            role_counts[role] = per_zone
+        workers[zid] = {"count": share, "roles": role_counts}
+
+    return workers
+
+
+# ── 4. Conflict and Risk Detection ────────────────────────────────────────────
+
 
 def detect_conflicts(
     zones: list[dict[str, Any]],
     state: dict[str, Any],
     day: int,
+    project_duration: int = 180,
+    critical_path: list[str] | None = None,
 ) -> list[dict[str, Any]]:
-    """Detect safety and logistics conflicts in the current site state.
+    """Detect schedule, resource, equipment, and spatial conflicts.
 
-    Five conflict categories are checked:
-
-    1. **crane_worker_overlap** – crane swing radius intrudes on an
-       adjacent worker zone.
-    2. **crane_road_blocked** – crane swing arc covers an access road cell.
-    3. **worker_density_exceeded** – zone headcount exceeds OSHA limit
-       of 25 workers.
-    4. **material_low** – material stock is below 20% of capacity.
-    5. **crane_overlap** – two active cranes are closer than the sum of
-       their swing radii plus a safety buffer.
-
-    Each conflict dict contains:
-        type, severity ("HIGH" | "MEDIUM"), message, cost_impact, suggestion
+    Six task-level risk categories plus four zone-level spatial checks.
+    Every conflict dict contains at minimum:
+        type, severity, message, cost_impact, schedule_impact_days, suggestion
     """
     conflicts: list[dict[str, Any]] = []
-    zone_by_id = {_zone_id(z): z for z in zones}
-    active_cranes = [c for c in state["cranes"] if c["active"]]
+    cp_result = calculate_critical_path(BASE_TASKS, project_duration)
+    if critical_path is None:
+        critical_path = cp_result["critical_path"]
+    schedule = cp_result["schedule"]
+    schedule_by_name = {t["name"]: t for t in schedule}
 
+    active_names = {t["name"] for t in state.get("active_tasks", [])}
+    crew_on_site = state.get("crew_on_site", {})
+    crew_required = state.get("crew_required", {})
+
+    # ── 4a. Schedule overrun risk ─────────────────────────────────────
+    if cp_result["schedule_risk"]:
+        conflicts.append({
+            "type": "schedule_risk",
+            "severity": "HIGH",
+            "message": (
+                f"Day {day}: Critical path spans {cp_result['makespan']} days "
+                f"but project duration is {project_duration} days — "
+                f"{cp_result['overrun_days']}-day overrun projected."
+            ),
+            "cost_impact": _usd(cp_result["overrun_days"] * 12_000),
+            "schedule_impact_days": cp_result["overrun_days"],
+            "suggestion": (
+                f"Fast-track by overlapping tasks, add overtime shifts, or "
+                f"negotiate a schedule extension. Focus acceleration on: "
+                f"{', '.join(critical_path[:3])}."
+            ),
+        })
+
+    # ── 4b. Critical-path task not running when it should be ──────────
+    for cp_name in critical_path:
+        task = schedule_by_name.get(cp_name)
+        if not task:
+            continue
+        if task["earliest_start"] < day <= task["earliest_finish"]:
+            if cp_name not in active_names:
+                slip = day - task["earliest_start"]
+                conflicts.append({
+                    "type": "schedule_risk",
+                    "severity": "HIGH",
+                    "message": (
+                        f"Day {day}: Critical path task '{cp_name}' should be "
+                        f"active (ES day {task['earliest_start']}, EF day "
+                        f"{task['earliest_finish']}) but is not running. "
+                        f"Potential {slip}-day slip."
+                    ),
+                    "cost_impact": _usd(slip * 8_500),
+                    "schedule_impact_days": slip,
+                    "suggestion": (
+                        f"Immediately mobilize crew for '{cp_name}'. Every day "
+                        f"of delay on a critical path task pushes the entire "
+                        f"project completion date."
+                    ),
+                })
+
+    # ── 4c. Crew shortage ─────────────────────────────────────────────
+    for role, needed in crew_required.items():
+        on_site = crew_on_site.get(role, 0)
+        if on_site >= needed:
+            continue
+        shortfall = needed - on_site
+        productivity_loss = round((shortfall / max(needed, 1)) * 100)
+        conflicts.append({
+            "type": "crew_shortage",
+            "severity": "HIGH" if productivity_loss > 30 else "MEDIUM",
+            "message": (
+                f"Day {day}: Need {needed} {role}(s) for active tasks but "
+                f"only {on_site} on site ({shortfall} short). Productivity "
+                f"reduced by ~{productivity_loss}%."
+            ),
+            "cost_impact": _usd(shortfall * 650 + productivity_loss * 200),
+            "schedule_impact_days": max(1, shortfall),
+            "suggestion": (
+                f"Call in {shortfall} additional {role}(s) or redistribute "
+                f"from non-critical tasks. Consider overtime for existing crew."
+            ),
+        })
+
+    # ── 4d. Material shortage ─────────────────────────────────────────
+    for mat_id, mat in state.get("materials", {}).items():
+        if mat.get("pct_remaining", 100) >= MATERIAL_LOW_THRESHOLD_PCT * 100:
+            continue
+        daily = mat.get("daily_usage", 0)
+        quantity = mat.get("quantity", 0)
+        days_left = quantity / daily if daily > 0 else 999
+        restock_in = mat.get("days_until_restock", RESTOCK_CYCLE_DAYS)
+
+        if days_left >= restock_in:
+            continue
+
+        severity = "HIGH" if days_left < 3 else "MEDIUM"
+        conflicts.append({
+            "type": "material_shortage",
+            "severity": severity,
+            "message": (
+                f"Day {day}: {mat['name']} at {mat.get('pct_remaining', 0)}% "
+                f"({quantity} {mat.get('unit', '')} remaining). At "
+                f"{daily} {mat.get('unit', '')}/day burn rate, stockout in "
+                f"~{days_left:.1f} days. Next restock in {restock_in} days."
+            ),
+            "cost_impact": _usd(4_500 + (100 - mat.get("pct_remaining", 0)) * 150),
+            "schedule_impact_days": max(0, round(restock_in - days_left)),
+            "suggestion": (
+                f"Place emergency order for {mat['name']} with expedited "
+                f"delivery (2–3 business days). Reduce consumption by "
+                f"deferring non-critical work using this material."
+            ),
+        })
+
+    # ── 4e. Equipment risk (crane breakdown during active need) ───────
+    for event in state.get("equipment_events", []):
+        if event.get("event") == "breakdown" and event.get("impact") == "critical":
+            conflicts.append({
+                "type": "equipment_risk",
+                "severity": "HIGH",
+                "message": (
+                    f"Day {day}: {event['equipment']} has broken down while "
+                    f"crane operations are required for active tasks. Heavy "
+                    f"lifts and steel erection are halted."
+                ),
+                "cost_impact": _usd(12_000),
+                "schedule_impact_days": 1,
+                "suggestion": (
+                    f"Deploy maintenance crew to {event['equipment']} "
+                    f"immediately. If repair exceeds 4 hours, mobilize a "
+                    f"backup crane or reschedule lifts to next available day."
+                ),
+            })
+
+    # ── 4f. Parallel task conflicts (same crew type contention) ───────
+    if len(state.get("active_tasks", [])) > 1:
+        role_demands: dict[str, list[str]] = {}
+        for t_info in state.get("active_tasks", []):
+            task = schedule_by_name.get(t_info["name"], {})
+            for role in task.get("required_crew", {}):
+                role_demands.setdefault(role, []).append(t_info["name"])
+
+        pool = DEFAULT_CREW_POOL
+        for role, task_names in role_demands.items():
+            if len(task_names) < 2:
+                continue
+            total_needed = sum(
+                schedule_by_name.get(n, {}).get("required_crew", {}).get(role, 0)
+                for n in task_names
+            )
+            available = pool.get(role, 0)
+            if total_needed <= available:
+                continue
+            conflicts.append({
+                "type": "parallel_task_conflict",
+                "severity": "MEDIUM",
+                "message": (
+                    f"Day {day}: Tasks {' and '.join(task_names)} both need "
+                    f"{role}s — combined demand of {total_needed} exceeds "
+                    f"available pool of {available}."
+                ),
+                "cost_impact": _usd((total_needed - available) * 500),
+                "schedule_impact_days": 0,
+                "suggestion": (
+                    f"Stagger {task_names[0]} and {task_names[1]}, or bring in "
+                    f"{total_needed - available} temporary {role}(s) to run "
+                    f"both tasks in parallel."
+                ),
+            })
+
+    # ── 4g. Cascade delay ─────────────────────────────────────────────
+    for cp_name in critical_path:
+        if cp_name not in active_names:
+            continue
+        task = schedule_by_name.get(cp_name, {})
+        for role, needed in task.get("required_crew", {}).items():
+            on_site = crew_on_site.get(role, 0)
+            if on_site >= needed:
+                continue
+            ratio = on_site / max(needed, 1)
+            if ratio >= 0.7:
+                continue
+            extension = round(task.get("duration_days", 0) * (1 - ratio))
+            conflicts.append({
+                "type": "cascade_delay",
+                "severity": "HIGH",
+                "message": (
+                    f"Day {day}: Critical task '{cp_name}' is under-crewed "
+                    f"({on_site}/{needed} {role}s). At current manning the "
+                    f"task extends ~{extension} days, cascading to all "
+                    f"downstream tasks."
+                ),
+                "cost_impact": _usd(extension * 10_000),
+                "schedule_impact_days": extension,
+                "suggestion": (
+                    f"Critical path task — every day it slips pushes the whole "
+                    f"project. Get {needed - on_site} more {role}(s) on site "
+                    f"today or authorize overtime."
+                ),
+            })
+
+    # ── Zone-based spatial conflicts ──────────────────────────────────
+    _detect_zone_conflicts(zones, state, day, conflicts)
+
+    conflicts.sort(
+        key=lambda c: (
+            0 if c["severity"] == "HIGH" else 1,
+            -c["cost_impact"],
+        ),
+    )
+    return conflicts
+
+
+# ── Zone-level spatial checks (crane swing, density, overlap) ─────────────────
+
+
+def _detect_zone_conflicts(
+    zones: list[dict[str, Any]],
+    state: dict[str, Any],
+    day: int,
+    conflicts: list[dict[str, Any]],
+) -> None:
+    active_cranes = [c for c in state.get("cranes", []) if c.get("active")]
     worker_zones = [z for z in zones if z["type"] == "workers"]
     road_zones = [z for z in zones if z["type"] == "road"]
 
-    # ── 1. Crane swing overlapping worker zones ───────────────────────
+    # Crane swing → worker zone overlap
     for crane in active_cranes:
         for wz in worker_zones:
             wz_id = _zone_id(wz)
             if wz_id == crane["zone_id"]:
                 continue
-
-            worker_count = state["workers"].get(wz_id, {}).get("count", 0)
+            worker_count = state.get("workers", {}).get(wz_id, {}).get("count", 0)
             if worker_count == 0:
                 continue
-
             dist = _dist(crane["x"], crane["y"], wz["x"], wz["y"])
             intrusion = crane["swing_radius"] + 0.5 - dist
             if intrusion <= 0:
                 continue
-
             label = _zone_label(wz)
             severity = "HIGH" if intrusion > 0.8 or worker_count > 15 else "MEDIUM"
             conflicts.append({
@@ -263,22 +867,21 @@ def detect_conflicts(
                     f"OSHA 29 CFR 1926.1400."
                 ),
                 "cost_impact": _usd(intrusion * 12_000 + worker_count * 350),
+                "schedule_impact_days": 0,
                 "suggestion": (
                     f"Establish an exclusion zone around {crane['name']}'s "
                     f"swing path or install a zoned anti-collision system to "
-                    f"lock out rotation toward {label} while workers are "
-                    f"present."
+                    f"lock out rotation toward {label} while workers are present."
                 ),
             })
 
-    # ── 2. Crane blocking access road ─────────────────────────────────
+    # Crane swing → access road
     for crane in active_cranes:
         for road in road_zones:
             dist = _dist(crane["x"], crane["y"], road["x"], road["y"])
             intrusion = crane["swing_radius"] + 0.5 - dist
             if intrusion <= 0:
                 continue
-
             label = _zone_label(road)
             conflicts.append({
                 "type": "crane_road_blocked",
@@ -289,21 +892,20 @@ def detect_conflicts(
                     f"vehicle access."
                 ),
                 "cost_impact": _usd(intrusion * 9_000 + 3_500),
+                "schedule_impact_days": 0,
                 "suggestion": (
                     f"Program a swing-limit switch on {crane['name']} to "
-                    f"prevent rotation over {label}. Alternatively, coordinate "
-                    f"lifts with the logistics team so road closures stay "
-                    f"under 15 min per site access requirements."
+                    f"prevent rotation over {label}. Coordinate lifts with "
+                    f"logistics so road closures stay under 15 min."
                 ),
             })
 
-    # ── 3. Worker density exceeding OSHA limit (25 per zone) ──────────
+    # Worker density exceeding OSHA limit
     for wz in worker_zones:
         wz_id = _zone_id(wz)
-        count = state["workers"].get(wz_id, {}).get("count", 0)
+        count = state.get("workers", {}).get(wz_id, {}).get("count", 0)
         if count <= OSHA_MAX_WORKERS_PER_ZONE:
             continue
-
         excess = count - OSHA_MAX_WORKERS_PER_ZONE
         label = _zone_label(wz)
         severity = "HIGH" if excess > 5 else "MEDIUM"
@@ -311,12 +913,13 @@ def detect_conflicts(
             "type": "worker_density_exceeded",
             "severity": severity,
             "message": (
-                f"Day {day}: {label} has {count} workers on site, "
-                f"exceeding the OSHA-recommended density limit of "
+                f"Day {day}: {label} has {count} workers on site, exceeding "
+                f"the OSHA-recommended density limit of "
                 f"{OSHA_MAX_WORKERS_PER_ZONE} by {excess}. Elevated risk of "
                 f"congestion-related injuries (29 CFR 1926.20)."
             ),
             "cost_impact": _usd(excess * 800 + 2_000),
+            "schedule_impact_days": 0,
             "suggestion": (
                 f"Split {label} into sub-zones with a dedicated safety "
                 f"corridor, or stagger crew shifts so no more than "
@@ -324,76 +927,97 @@ def detect_conflicts(
             ),
         })
 
-    # ── 4. Material stock below 20% ───────────────────────────────────
-    for mat_id, mat in state["materials"].items():
-        if mat["pct_remaining"] >= MATERIAL_LOW_THRESHOLD_PCT * 100:
-            continue
-
-        days_left = (
-            mat["quantity"] / mat["daily_usage"]
-            if mat["daily_usage"] > 0 else 999
-        )
-        zone_label = (
-            _zone_label(zone_by_id[mat["zone_id"]])
-            if mat["zone_id"] in zone_by_id
-            else mat["zone_id"]
-        )
-        severity = "HIGH" if mat["pct_remaining"] < 10 or days_left < 2 else "MEDIUM"
-
-        conflicts.append({
-            "type": "material_low",
-            "severity": severity,
-            "message": (
-                f"Day {day}: {mat['name']} at {zone_label} is down to "
-                f"{mat['quantity']} {mat['unit']} ({mat['pct_remaining']}% "
-                f"remaining). At current burn of {mat['daily_usage']} "
-                f"{mat['unit']}/day, stock runs out in ~{days_left:.1f} "
-                f"days. Next scheduled restock: day "
-                f"{state['next_restock_day']}."
-            ),
-            "cost_impact": _usd(
-                4_500
-                + (MATERIAL_LOW_THRESHOLD_PCT * 100 - mat["pct_remaining"]) * 200
-            ),
-            "suggestion": (
-                f"Place an emergency order for {mat['name']} with expedited "
-                f"delivery (2–3 business days). If restock is more than "
-                f"{max(1, int(days_left))} day(s) away, reduce daily "
-                f"consumption by re-sequencing non-critical work in "
-                f"{zone_label}."
-            ),
-        })
-
-    # ── 5. Two cranes with overlapping radii ──────────────────────────
+    # Two cranes with overlapping swing radii
     for i, c1 in enumerate(active_cranes):
         for c2 in active_cranes[i + 1:]:
             dist = _dist(c1["x"], c1["y"], c2["x"], c2["y"])
-            safe_distance = (
-                c1["swing_radius"] + c2["swing_radius"] + CRANE_SAFETY_BUFFER
-            )
-            overlap = safe_distance - dist
+            safe = c1["swing_radius"] + c2["swing_radius"] + CRANE_SAFETY_BUFFER
+            overlap = safe - dist
             if overlap <= 0:
                 continue
-
             severity = "HIGH" if overlap > 1.0 else "MEDIUM"
             conflicts.append({
                 "type": "crane_overlap",
                 "severity": severity,
                 "message": (
                     f"Day {day}: {c1['name']} and {c2['name']} are "
-                    f"{dist:.1f} cells apart but require {safe_distance:.1f} "
-                    f"cells clearance (includes {CRANE_SAFETY_BUFFER} cell "
-                    f"safety buffer). Overlap of {overlap:.1f} cells creates "
-                    f"a collision risk per ASME B30.3."
+                    f"{dist:.1f} cells apart but require {safe:.1f} cells "
+                    f"clearance. Overlap of {overlap:.1f} cells creates a "
+                    f"collision risk per ASME B30.3."
                 ),
                 "cost_impact": _usd(overlap * 25_000 + 5_000),
+                "schedule_impact_days": 0,
                 "suggestion": (
-                    f"Install an anti-collision system (e.g., AMCS or Zeppelin "
-                    f"ZAC) on both cranes. As an immediate measure, define "
+                    f"Install an anti-collision system on both cranes. Define "
                     f"non-overlapping swing sectors and assign a dedicated "
-                    f"signal person when both cranes operate simultaneously."
+                    f"signal person when both operate simultaneously."
                 ),
             })
 
-    conflicts.sort(key=lambda c: (0 if c["severity"] == "HIGH" else 1, -c["cost_impact"]))
-    return conflicts
+
+# ── 6. Scenario Comparison ────────────────────────────────────────────────────
+
+
+def compare_scenarios(
+    scenario_a_config: dict[str, Any],
+    scenario_b_config: dict[str, Any],
+    zones: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Run two project configurations through the full simulation and compare.
+
+    Returns side-by-side metrics for each scenario:
+        total_duration, total_cost, critical_path_tasks,
+        highest_risk_day, bottleneck_task
+    """
+    zones = zones or []
+    results: dict[str, Any] = {}
+
+    for label, config in [("scenario_a", scenario_a_config),
+                          ("scenario_b", scenario_b_config)]:
+        duration = config.get("project_duration", 180)
+        cp = calculate_critical_path(BASE_TASKS, duration)
+
+        total_cost = 0
+        peak_risk_day = 0
+        peak_risk_cost = 0
+        bottleneck_task: str | None = None
+        max_slip = 0
+
+        sample_interval = max(1, duration // 60)
+        sample_days = list(range(1, duration + 1, sample_interval))
+        if duration not in sample_days:
+            sample_days.append(duration)
+
+        for d in sample_days:
+            state = run_simulation_tick(zones, d, duration, config)
+            day_conflicts = detect_conflicts(
+                zones, state, d, duration, cp["critical_path"],
+            )
+            day_cost = sum(c["cost_impact"] for c in day_conflicts)
+            total_cost += day_cost
+
+            if day_cost > peak_risk_cost:
+                peak_risk_cost = day_cost
+                peak_risk_day = d
+
+            for c in day_conflicts:
+                slip = c.get("schedule_impact_days", 0)
+                if slip > max_slip:
+                    max_slip = slip
+                    msg = c.get("message", "")
+                    if "'" in msg:
+                        parts = msg.split("'")
+                        if len(parts) >= 2:
+                            bottleneck_task = parts[1]
+
+        results[label] = {
+            "total_duration": cp["makespan"],
+            "total_cost": _usd(total_cost),
+            "critical_path_tasks": cp["critical_path"],
+            "schedule_risk": cp["schedule_risk"],
+            "overrun_days": cp["overrun_days"],
+            "highest_risk_day": peak_risk_day,
+            "bottleneck_task": bottleneck_task,
+        }
+
+    return results

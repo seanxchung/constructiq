@@ -7,7 +7,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from supabase import create_client, Client
 
-from simulation import run_simulation_tick, detect_conflicts
+from simulation import (
+    run_simulation_tick,
+    detect_conflicts,
+    calculate_critical_path,
+    compare_scenarios,
+    BASE_TASKS,
+    DEFAULT_PROJECT_CONFIG,
+)
 from ai_agent import analyze_conflicts, chat_with_agent
 
 load_dotenv()
@@ -33,6 +40,12 @@ class SimulateRequest(BaseModel):
     zones: Optional[list[dict[str, Any]]] = Field(
         None, description="Zone layout from the frontend board"
     )
+    project_duration: int = Field(
+        180, description="Total project duration in days (30/60/90/180/365)"
+    )
+    project_config: Optional[dict[str, Any]] = Field(
+        None, description="Optional project configuration overrides"
+    )
 
 
 class ConflictDetail(BaseModel):
@@ -40,6 +53,7 @@ class ConflictDetail(BaseModel):
     severity: str
     message: str
     cost_impact: int
+    schedule_impact_days: int = 0
     suggestion: str
 
 
@@ -49,10 +63,24 @@ class SimulateResponse(BaseModel):
     ai_analysis: Optional[str] = None
 
 
+class ScenarioConfig(BaseModel):
+    project_duration: int = 180
+    crew_size: Optional[dict[str, int]] = None
+    daily_budget: float = 45_000.0
+    project_type: str = "commercial"
+
+
+class CompareRequest(BaseModel):
+    scenario_a: ScenarioConfig
+    scenario_b: ScenarioConfig
+    zones: Optional[list[dict[str, Any]]] = None
+
+
 class ChatRequest(BaseModel):
     message: str = Field(..., min_length=1, description="Question for the AI site manager")
     day: int = Field(..., ge=1)
     zones: Optional[list[dict[str, Any]]] = None
+    project_duration: int = 180
 
 
 class ChatResponse(BaseModel):
@@ -81,8 +109,13 @@ def simulate(req: SimulateRequest):
             ),
         )
 
-    state = run_simulation_tick(zones, req.day)
-    conflicts = detect_conflicts(zones, state, req.day)
+    state = run_simulation_tick(
+        zones, req.day, req.project_duration, req.project_config,
+    )
+    cp = calculate_critical_path(BASE_TASKS, req.project_duration)
+    conflicts = detect_conflicts(
+        zones, state, req.day, req.project_duration, cp["critical_path"],
+    )
 
     ai_analysis = None
     if conflicts:
@@ -98,10 +131,17 @@ def simulate(req: SimulateRequest):
     )
 
 
+@app.post("/api/compare")
+def scenario_compare(req: CompareRequest):
+    config_a = req.scenario_a.model_dump(exclude_none=True)
+    config_b = req.scenario_b.model_dump(exclude_none=True)
+    return compare_scenarios(config_a, config_b, req.zones or [])
+
+
 @app.post("/api/ai/chat", response_model=ChatResponse)
 def ai_chat(req: ChatRequest):
     zones = req.zones or []
-    state = run_simulation_tick(zones, req.day)
+    state = run_simulation_tick(zones, req.day, req.project_duration)
 
     try:
         reply = chat_with_agent(req.message, state, req.day)
