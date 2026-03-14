@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
+import ReactMarkdown from "react-markdown";
 
 /* ───────────────────── constants ───────────────────── */
 
@@ -24,6 +25,22 @@ const PHASES = [
 ];
 
 const API_BASE = "http://localhost:8000";
+
+const MD_COMPONENTS = {
+  p: ({ children }) => <p style={{ margin: "4px 0" }}>{children}</p>,
+  strong: ({ children }) => <strong style={{ fontWeight: 600, color: "#f1f5f9" }}>{children}</strong>,
+  em: ({ children }) => <em style={{ fontStyle: "italic", color: "#cbd5e1" }}>{children}</em>,
+  ul: ({ children }) => <ul style={{ margin: "4px 0", paddingLeft: 18 }}>{children}</ul>,
+  ol: ({ children }) => <ol style={{ margin: "4px 0", paddingLeft: 18 }}>{children}</ol>,
+  li: ({ children }) => <li style={{ marginBottom: 2 }}>{children}</li>,
+  code: ({ children }) => (
+    <code style={{ background: "#334155", padding: "1px 5px", borderRadius: 4, fontSize: 12, fontFamily: "monospace" }}>
+      {children}
+    </code>
+  ),
+  h3: ({ children }) => <h3 style={{ fontSize: 14, fontWeight: 700, color: "#f1f5f9", margin: "6px 0 2px" }}>{children}</h3>,
+  h4: ({ children }) => <h4 style={{ fontSize: 13, fontWeight: 600, color: "#f1f5f9", margin: "4px 0 2px" }}>{children}</h4>,
+};
 
 /* ───────────────────── component ───────────────────── */
 
@@ -433,7 +450,11 @@ export default function Home() {
                       Mike Callahan
                     </div>
                   )}
-                  {msg.text}
+                  {msg.role === "ai" ? (
+                    <ReactMarkdown components={MD_COMPONENTS}>{msg.text}</ReactMarkdown>
+                  ) : (
+                    msg.text
+                  )}
                 </div>
               </div>
             ))}
