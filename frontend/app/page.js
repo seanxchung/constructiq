@@ -102,7 +102,7 @@ export default function Home() {
 
   useEffect(() => {
     if (!isPlaying || day <= 1) return;
-    if (simulatingRef.current || skipInProgressRef.current) return;
+    if (simulatingRef.current || skipInProgressRef.current || isLoading) return;
     simulatingRef.current = true;
 
     fetch(`${API_BASE}/api/simulate`, {
