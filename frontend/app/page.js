@@ -68,9 +68,19 @@ export default function Home() {
   const [hoveredCell, setHoveredCell] = useState(-1);
   const [activeTab, setActiveTab] = useState("site");
   const [analytics, setAnalytics] = useState([]);
+  const [hasNewAlert, setHasNewAlert] = useState(false);
   const scrollRef = useRef(null);
   const simulatingRef = useRef(false);
   const skipInProgressRef = useRef(false);
+  const alertTimerRef = useRef(null);
+
+  const triggerAlert = () => {
+    setHasNewAlert(true);
+    clearTimeout(alertTimerRef.current);
+    alertTimerRef.current = setTimeout(() => setHasNewAlert(false), 3000);
+  };
+
+  useEffect(() => () => clearTimeout(alertTimerRef.current), []);
 
   useEffect(() => {
     scrollRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -114,6 +124,7 @@ export default function Home() {
         const hasHigh = (data?.conflicts || []).some((c) => c.severity === "HIGH");
         if (hasHigh && data.ai_analysis) {
           setMessages((m) => [...m, { role: "ai", text: data.ai_analysis }]);
+          triggerAlert();
         }
       })
       .catch(() => {})
@@ -188,8 +199,10 @@ export default function Home() {
             costImpact: (data.conflicts || []).reduce((s, c) => s + (c.cost_impact || 0), 0),
           }]);
         }
+        const hasHigh = (data?.conflicts || []).some((c) => c.severity === "HIGH");
         if (data?.conflicts?.length > 0 && data.ai_analysis) {
           setMessages((m) => [...m, { role: "ai", text: data.ai_analysis }]);
+          if (hasHigh) triggerAlert();
         }
       })
       .catch(() => {})
@@ -497,7 +510,12 @@ export default function Home() {
         </div>
 
         {/* ──── RIGHT COLUMN — AI CHAT ──── */}
-        <div style={S.rightCol}>
+        <div style={{
+          ...S.rightCol,
+          borderLeft: hasNewAlert ? "1.5px solid #ef4444" : "1px solid #1e293b",
+          boxShadow: hasNewAlert ? "inset 0 0 30px #ef444425, 0 0 40px #ef444420" : "none",
+          transition: "border-left 0.3s ease, box-shadow 0.3s ease",
+        }}>
           {/* Chat Header */}
           <div style={S.chatHeader}>
             <div style={S.avatar}>MC</div>
