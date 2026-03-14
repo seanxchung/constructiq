@@ -70,6 +70,17 @@ def root():
 def simulate(req: SimulateRequest):
     zones = req.zones or []
 
+    if not zones:
+        return SimulateResponse(
+            simulation={},
+            conflicts=[],
+            ai_analysis=(
+                "No zones placed yet. Design your construction site first — "
+                "add cranes, worker zones, materials, and access roads to the "
+                "grid, then run the simulation."
+            ),
+        )
+
     state = run_simulation_tick(zones, req.day)
     conflicts = detect_conflicts(zones, state, req.day)
 

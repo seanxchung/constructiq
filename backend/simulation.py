@@ -38,25 +38,6 @@ MATERIAL_TEMPLATES = [
     {"name": "Lumber (2×4 SPF)", "unit": "board-ft", "max_quantity": 3000, "daily_usage": 110},
 ]
 
-# ── Default site layout (simple format, used when frontend sends no zones) ───
-
-DEFAULT_ZONES: list[dict[str, Any]] = [
-    {"type": "road", "x": 0, "y": 6, "capacity": 0, "metadata": {}},
-    {"type": "road", "x": 1, "y": 6, "capacity": 0, "metadata": {}},
-    {"type": "road", "x": 2, "y": 6, "capacity": 0, "metadata": {}},
-    {"type": "crane", "x": 3, "y": 3, "capacity": 25, "metadata": {}},
-    {"type": "crane", "x": 8, "y": 4, "capacity": 25, "metadata": {}},
-    {"type": "workers", "x": 4, "y": 3, "capacity": 25, "metadata": {}},
-    {"type": "workers", "x": 5, "y": 3, "capacity": 25, "metadata": {}},
-    {"type": "workers", "x": 8, "y": 5, "capacity": 25, "metadata": {}},
-    {"type": "materials", "x": 6, "y": 8, "capacity": 25, "metadata": {}},
-    {"type": "materials", "x": 7, "y": 8, "capacity": 25, "metadata": {}},
-    {"type": "building", "x": 5, "y": 5, "capacity": 25, "metadata": {}},
-    {"type": "building", "x": 6, "y": 5, "capacity": 25, "metadata": {}},
-    {"type": "building", "x": 5, "y": 4, "capacity": 25, "metadata": {}},
-    {"type": "building", "x": 6, "y": 4, "capacity": 25, "metadata": {}},
-]
-
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 def _dist(x1: float, y1: float, x2: float, y2: float) -> float:
