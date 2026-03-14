@@ -24,6 +24,11 @@ const PHASES = [
   { label: "Handover", pct: 100 },
 ];
 
+const INITIAL_MESSAGES = [
+  { role: "ai", text: "Good morning. I'm Mike Callahan, your AI construction advisor. I've analyzed the site geotechnical report and I'm ready to help you optimize this build from day one." },
+  { role: "ai", text: "Recommendation: Start by laying Access Roads along the perimeter for logistics flow, then position Cranes for maximum lift coverage. I'll flag conflicts in real-time." },
+];
+
 const API_BASE = "http://localhost:8000";
 
 const MD_COMPONENTS = {
@@ -49,13 +54,12 @@ export default function Home() {
   const [cells, setCells] = useState(Array(GRID * GRID).fill(null));
   const [day, setDay] = useState(1);
   const [isPlaying, setIsPlaying] = useState(false);
-  const [messages, setMessages] = useState([
-    { role: "ai", text: "Good morning. I'm Mike Callahan, your AI construction advisor. I've analyzed the site geotechnical report and I'm ready to help you optimize this build from day one." },
-    { role: "ai", text: "Recommendation: Start by laying Access Roads along the perimeter for logistics flow, then position Cranes for maximum lift coverage. I'll flag conflicts in real-time." },
-  ]);
+  const [messages, setMessages] = useState([...INITIAL_MESSAGES]);
   const [draft, setDraft] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [hoveredCell, setHoveredCell] = useState(-1);
+  const [activeTab, setActiveTab] = useState("site");
+  const [analytics, setAnalytics] = useState([]);
   const scrollRef = useRef(null);
   const simulatingRef = useRef(false);
 
@@ -73,7 +77,7 @@ export default function Home() {
         }
         return d + 1;
       });
-    }, 120);
+    }, 800);
     return () => clearInterval(id);
   }, [isPlaying]);
 
@@ -85,10 +89,19 @@ export default function Home() {
     fetch(`${API_BASE}/api/simulate`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ day, zones: [] }),
+      body: JSON.stringify({ day, zones: buildZones() }),
     })
       .then((res) => res.ok ? res.json() : null)
       .then((data) => {
+        if (data) {
+          setAnalytics((prev) => [...prev, {
+            day,
+            conflictCount: data.conflicts?.length || 0,
+            totalWorkers: data.simulation?.total_workers || 0,
+            materials: Object.values(data.simulation?.materials || {}).map((m) => ({ name: m.name, pct: m.pct_remaining })),
+            costImpact: (data.conflicts || []).reduce((s, c) => s + (c.cost_impact || 0), 0),
+          }]);
+        }
         if (data?.conflicts?.length > 0 && data.ai_analysis) {
           setMessages((m) => [...m, { role: "ai", text: data.ai_analysis }]);
         }
@@ -96,6 +109,12 @@ export default function Home() {
       .catch(() => {})
       .finally(() => { simulatingRef.current = false; });
   }, [day, isPlaying]);
+
+  const buildZones = () =>
+    cells.reduce((acc, cell, i) => {
+      if (cell) acc.push({ type: cell.id, x: i % GRID, y: Math.floor(i / GRID), capacity: 25, metadata: {} });
+      return acc;
+    }, []);
 
   const placeZone = (i) => {
     if (!activeTool) return;
@@ -117,7 +136,7 @@ export default function Home() {
       const res = await fetch(`${API_BASE}/api/ai/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: text, day, zones: [] }),
+        body: JSON.stringify({ message: text, day, zones: buildZones() }),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
@@ -130,6 +149,46 @@ export default function Home() {
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const rewind = () => {
+    setIsPlaying(false);
+    setDay(1);
+    setMessages([...INITIAL_MESSAGES]);
+    setAnalytics([]);
+  };
+
+  const skipDays = (n) => {
+    const target = Math.min(day + n, TOTAL_DAYS);
+    setDay(target);
+    fetch(`${API_BASE}/api/simulate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ day: target, zones: buildZones() }),
+    })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data) {
+          setAnalytics((prev) => [...prev, {
+            day: target,
+            conflictCount: data.conflicts?.length || 0,
+            totalWorkers: data.simulation?.total_workers || 0,
+            materials: Object.values(data.simulation?.materials || {}).map((m) => ({ name: m.name, pct: m.pct_remaining })),
+            costImpact: (data.conflicts || []).reduce((s, c) => s + (c.cost_impact || 0), 0),
+          }]);
+        }
+        if (data?.conflicts?.length > 0 && data.ai_analysis) {
+          setMessages((m) => [...m, { role: "ai", text: data.ai_analysis }]);
+        }
+      })
+      .catch(() => {});
+  };
+
+  const clearSite = () => {
+    setCells(Array(GRID * GRID).fill(null));
+    setIsPlaying(false);
+    setDay(1);
+    setAnalytics([]);
   };
 
   const progress = ((day - 1) / (TOTAL_DAYS - 1)) * 100;
@@ -156,9 +215,9 @@ export default function Home() {
           <span style={S.badge}>BETA</span>
         </div>
         <div style={S.navCenter}>
-          <NavTab label="SITE PLAN" active />
+          <NavTab label="SITE PLAN" active={activeTab === "site"} onClick={() => setActiveTab("site")} />
           <NavTab label="SCHEDULE" />
-          <NavTab label="ANALYTICS" />
+          <NavTab label="ANALYTICS" active={activeTab === "analytics"} onClick={() => setActiveTab("analytics")} />
         </div>
         <div style={S.navRight}>
           <div style={S.liveGroup}>
@@ -176,6 +235,8 @@ export default function Home() {
       <div style={S.main}>
         {/* ──── LEFT COLUMN ──── */}
         <div style={S.leftCol}>
+          {activeTab === "site" ? (
+          <>
           {/* Zone Toolbar */}
           <div style={S.toolbar}>
             <span style={S.sectionLabel}>ZONES</span>
@@ -198,6 +259,18 @@ export default function Home() {
                 </button>
               );
             })}
+            <div style={{ width: 1, height: 24, background: "#1e293b", margin: "0 4px" }} />
+            <button
+              onClick={clearSite}
+              style={{
+                ...S.toolBtn,
+                borderColor: "#1e293b",
+                background: "transparent",
+                color: "#ef4444",
+              }}
+            >
+              ✕ Clear Site
+            </button>
             <div style={{ flex: 1 }} />
             <div style={S.zoneCounter}>
               {placedCount > 0 && (
@@ -312,9 +385,16 @@ export default function Home() {
               ))}
             </div>
           </div>
+          </>
+          ) : (
+            <AnalyticsDashboard analytics={analytics} />
+          )}
 
           {/* Timeline */}
           <div style={S.timeline}>
+            <button onClick={rewind} style={{ ...S.playBtn, background: "#1e293b", fontSize: 14 }} title="Rewind to Day 1">
+              ⏮
+            </button>
             <button
               onClick={() => setIsPlaying(!isPlaying)}
               style={{
@@ -333,6 +413,23 @@ export default function Home() {
               </span>
               <span style={{ fontSize: 11, color: "#475569" }}>of {TOTAL_DAYS}</span>
             </div>
+            <button
+              onClick={() => skipDays(7)}
+              disabled={day >= TOTAL_DAYS}
+              style={{
+                ...S.toolBtn,
+                borderColor: "#334155",
+                background: "#1e293b",
+                color: "#94a3b8",
+                fontSize: 11,
+                padding: "5px 10px",
+                opacity: day >= TOTAL_DAYS ? 0.4 : 1,
+                cursor: day >= TOTAL_DAYS ? "not-allowed" : "pointer",
+              }}
+              title="Skip forward 7 days"
+            >
+              +7 days
+            </button>
 
             <div style={S.progressWrapper}>
               <div style={S.phaseLabels}>
@@ -475,7 +572,7 @@ export default function Home() {
               }}
             />
             <button
-              onClick={sendMessage}
+              onClick={() => sendMessage()}
               disabled={isLoading}
               style={{
                 ...S.sendBtn,
@@ -497,9 +594,10 @@ export default function Home() {
 
 /* ───────────────────── sub-components ───────────────────── */
 
-function NavTab({ label, active }) {
+function NavTab({ label, active, onClick }) {
   return (
     <button
+      onClick={onClick}
       style={{
         background: "none",
         border: "none",
@@ -516,6 +614,175 @@ function NavTab({ label, active }) {
     >
       {label}
     </button>
+  );
+}
+
+/* ───────────────────── analytics dashboard ───────────────────── */
+
+function AnalyticsDashboard({ analytics }) {
+  if (!analytics.length) {
+    return (
+      <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 8, background: "#080c18" }}>
+        <span style={{ fontSize: 36 }}>📊</span>
+        <span style={{ fontSize: 14, fontWeight: 600, color: "#64748b" }}>No analytics data yet</span>
+        <span style={{ fontSize: 12, color: "#475569" }}>Press play to start the simulation</span>
+      </div>
+    );
+  }
+
+  const W = 380, H = 170;
+  const P = { t: 8, r: 8, b: 20, l: 44 };
+  const iW = W - P.l - P.r;
+  const iH = H - P.t - P.b;
+
+  const last = analytics[analytics.length - 1];
+  const totalConflicts = analytics.reduce((s, d) => s + d.conflictCount, 0);
+  const peakWorkers = Math.max(...analytics.map((d) => d.totalWorkers));
+  let cum = 0;
+  const riskSeries = analytics.map((d) => ({ day: d.day, cum: (cum += d.costImpact) }));
+  const totalCost = cum;
+
+  const fmtK = (v) =>
+    v >= 1_000_000 ? `$${(v / 1_000_000).toFixed(1)}M` : v >= 1000 ? `$${Math.round(v / 1000)}K` : `$${v}`;
+
+  const yGrid = (maxVal, fmt) =>
+    [0.25, 0.5, 0.75].map((pct) => {
+      const y = P.t + iH * (1 - pct);
+      const label = fmt ? fmt(Math.round(pct * maxVal)) : Math.round(pct * maxVal);
+      return (
+        <g key={pct}>
+          <line x1={P.l} y1={y} x2={W - P.r} y2={y} stroke="#1e293b" strokeWidth="1" />
+          <text x={P.l - 4} y={y + 3} fill="#475569" fontSize="9" textAnchor="end" fontFamily="monospace">{label}</text>
+        </g>
+      );
+    });
+
+  const baseline = <line x1={P.l} y1={P.t + iH} x2={W - P.r} y2={P.t + iH} stroke="#334155" strokeWidth="1" />;
+
+  const polyStr = (pts) => pts.map((p) => `${p.x},${p.y}`).join(" ");
+  const areaPath = (pts) => {
+    if (pts.length < 2) return "";
+    return `M ${P.l},${P.t + iH} ${pts.map((p) => `L ${p.x},${p.y}`).join(" ")} L ${pts[pts.length - 1].x},${P.t + iH} Z`;
+  };
+
+  const cData = analytics.slice(-60);
+  const maxC = Math.max(1, ...cData.map((d) => d.conflictCount));
+  const cBarW = Math.max(2, iW / cData.length - 1);
+
+  const maxW = Math.max(1, peakWorkers);
+  const wPts = analytics.map((d, i) => ({
+    x: P.l + (i / Math.max(analytics.length - 1, 1)) * iW,
+    y: P.t + iH - (d.totalWorkers / maxW) * iH,
+  }));
+
+  const mats = last.materials || [];
+  const matRowH = mats.length > 0 ? Math.min(30, iH / mats.length) : 30;
+  const matLabelW = 96;
+  const matBarMax = iW - matLabelW - 36;
+
+  const maxR = Math.max(1, totalCost);
+  const rPts = riskSeries.map((d, i) => ({
+    x: P.l + (i / Math.max(riskSeries.length - 1, 1)) * iW,
+    y: P.t + iH - (d.cum / maxR) * iH,
+  }));
+
+  const card = {
+    background: "#0f1520",
+    borderRadius: 10,
+    border: "1px solid #1e293b",
+    padding: "12px 14px",
+    display: "flex",
+    flexDirection: "column",
+    gap: 6,
+    overflow: "hidden",
+  };
+  const titleSt = { fontSize: 11, fontWeight: 700, color: "#64748b", letterSpacing: "0.06em" };
+
+  return (
+    <div style={{ flex: 1, overflow: "auto", background: "#080c18", padding: "16px 20px", display: "flex", flexDirection: "column", gap: 14 }}>
+      {/* KPI row */}
+      <div style={{ display: "flex", gap: 10 }}>
+        {[
+          { label: "DAYS RECORDED", val: analytics.length, color: "#60a5fa" },
+          { label: "TOTAL CONFLICTS", val: totalConflicts, color: "#f59e0b" },
+          { label: "PEAK WORKERS", val: peakWorkers, color: "#3b82f6" },
+          { label: "RISK EXPOSURE", val: fmtK(totalCost), color: "#ef4444" },
+        ].map((k) => (
+          <div key={k.label} style={{ flex: 1, background: "#0f1520", borderRadius: 8, border: "1px solid #1e293b", padding: "10px 14px" }}>
+            <div style={{ fontSize: 10, color: "#475569", fontWeight: 600, letterSpacing: "0.08em", marginBottom: 2 }}>{k.label}</div>
+            <div style={{ fontSize: 20, fontWeight: 800, color: k.color, fontVariantNumeric: "tabular-nums" }}>{k.val}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* 2×2 charts */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, flex: 1, minHeight: 0 }}>
+        {/* Conflict Frequency */}
+        <div style={card}>
+          <span style={titleSt}>CONFLICT FREQUENCY</span>
+          <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ display: "block" }}>
+            {yGrid(maxC)}
+            {cData.map((d, i) => {
+              const x = P.l + i * (cBarW + 1);
+              const h = (d.conflictCount / maxC) * iH;
+              return <rect key={i} x={x} y={P.t + iH - h} width={cBarW} height={Math.max(h, 0)} rx={1} fill="#f59e0b" opacity={0.85} />;
+            })}
+            {baseline}
+          </svg>
+        </div>
+
+        {/* Worker Density */}
+        <div style={card}>
+          <span style={titleSt}>WORKER DENSITY OVER TIME</span>
+          <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ display: "block" }}>
+            {yGrid(maxW)}
+            {wPts.length >= 2 && <path d={areaPath(wPts)} fill="#3b82f618" />}
+            <polyline points={polyStr(wPts)} fill="none" stroke="#3b82f6" strokeWidth="2" strokeLinejoin="round" />
+            {wPts.length > 0 && <circle cx={wPts[wPts.length - 1].x} cy={wPts[wPts.length - 1].y} r={3} fill="#3b82f6" />}
+            {baseline}
+          </svg>
+        </div>
+
+        {/* Material Levels */}
+        <div style={card}>
+          <span style={titleSt}>MATERIAL LEVELS</span>
+          <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ display: "block" }}>
+            {mats.length === 0 ? (
+              <text x={W / 2} y={H / 2} fill="#475569" fontSize="11" textAnchor="middle">No material zones placed</text>
+            ) : (
+              mats.map((m, i) => {
+                const y = P.t + i * matRowH;
+                const bW = Math.max(0, (m.pct / 100) * matBarMax);
+                const clr = m.pct > 50 ? "#22c55e" : m.pct > 20 ? "#eab308" : "#ef4444";
+                const name = m.name.length > 14 ? m.name.slice(0, 13) + "\u2026" : m.name;
+                return (
+                  <g key={i}>
+                    <text x={P.l} y={y + matRowH / 2 + 3} fill="#94a3b8" fontSize="9" fontFamily="monospace">{name}</text>
+                    <rect x={P.l + matLabelW} y={y + 4} width={matBarMax} height={matRowH - 8} rx={3} fill="#1e293b" />
+                    <rect x={P.l + matLabelW} y={y + 4} width={bW} height={matRowH - 8} rx={3} fill={clr} opacity={0.8} />
+                    <text x={P.l + matLabelW + matBarMax + 4} y={y + matRowH / 2 + 3} fill="#64748b" fontSize="9" fontFamily="monospace">
+                      {Math.round(m.pct)}%
+                    </text>
+                  </g>
+                );
+              })
+            )}
+          </svg>
+        </div>
+
+        {/* Risk Exposure */}
+        <div style={card}>
+          <span style={titleSt}>RISK EXPOSURE (CUMULATIVE $)</span>
+          <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ display: "block" }}>
+            {yGrid(maxR, fmtK)}
+            {rPts.length >= 2 && <path d={areaPath(rPts)} fill="#ef444418" />}
+            <polyline points={polyStr(rPts)} fill="none" stroke="#ef4444" strokeWidth="2" strokeLinejoin="round" />
+            {rPts.length > 0 && <circle cx={rPts[rPts.length - 1].x} cy={rPts[rPts.length - 1].y} r={3} fill="#ef4444" />}
+            {baseline}
+          </svg>
+        </div>
+      </div>
+    </div>
   );
 }
 

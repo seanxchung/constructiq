@@ -11,7 +11,6 @@ from simulation import DEFAULT_ZONES, run_simulation_tick, detect_conflicts
 from ai_agent import analyze_conflicts, chat_with_agent
 
 load_dotenv()
-
 supabase: Client = create_client(
     os.environ["SUPABASE_URL"],
     os.environ["SUPABASE_KEY"],
