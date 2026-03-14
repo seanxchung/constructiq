@@ -24,6 +24,14 @@ const PHASES = [
   { label: "Handover", pct: 100 },
 ];
 
+const GANTT_PHASES = [
+  { label: "Foundation", start: 1, end: 110, color: "#3b82f6" },
+  { label: "Structural", start: 111, end: 200, color: "#8b5cf6" },
+  { label: "MEP", start: 201, end: 270, color: "#f59e0b" },
+  { label: "Finishing", start: 271, end: 330, color: "#22c55e" },
+  { label: "Handover", start: 331, end: 365, color: "#ef4444" },
+];
+
 const INITIAL_MESSAGES = [
   { role: "ai", text: "Good morning. I'm Mike Callahan, your AI construction advisor. I've analyzed the site geotechnical report and I'm ready to help you optimize this build from day one." },
   { role: "ai", text: "Recommendation: Start by laying Access Roads along the perimeter for logistics flow, then position Cranes for maximum lift coverage. I'll flag conflicts in real-time." },
@@ -62,6 +70,7 @@ export default function Home() {
   const [analytics, setAnalytics] = useState([]);
   const scrollRef = useRef(null);
   const simulatingRef = useRef(false);
+  const skipInProgressRef = useRef(false);
 
   useEffect(() => {
     scrollRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -83,7 +92,7 @@ export default function Home() {
 
   useEffect(() => {
     if (!isPlaying || day <= 1) return;
-    if (simulatingRef.current) return;
+    if (simulatingRef.current || skipInProgressRef.current) return;
     simulatingRef.current = true;
 
     fetch(`${API_BASE}/api/simulate`, {
@@ -102,7 +111,8 @@ export default function Home() {
             costImpact: (data.conflicts || []).reduce((s, c) => s + (c.cost_impact || 0), 0),
           }]);
         }
-        if (data?.conflicts?.length > 0 && data.ai_analysis) {
+        const hasHigh = (data?.conflicts || []).some((c) => c.severity === "HIGH");
+        if (hasHigh && data.ai_analysis) {
           setMessages((m) => [...m, { role: "ai", text: data.ai_analysis }]);
         }
       })
@@ -160,6 +170,7 @@ export default function Home() {
 
   const skipDays = (n) => {
     const target = Math.min(day + n, TOTAL_DAYS);
+    skipInProgressRef.current = true;
     setDay(target);
     fetch(`${API_BASE}/api/simulate`, {
       method: "POST",
@@ -181,7 +192,8 @@ export default function Home() {
           setMessages((m) => [...m, { role: "ai", text: data.ai_analysis }]);
         }
       })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => { skipInProgressRef.current = false; });
   };
 
   const clearSite = () => {
@@ -216,7 +228,7 @@ export default function Home() {
         </div>
         <div style={S.navCenter}>
           <NavTab label="SITE PLAN" active={activeTab === "site"} onClick={() => setActiveTab("site")} />
-          <NavTab label="SCHEDULE" />
+          <NavTab label="SCHEDULE" active={activeTab === "schedule"} onClick={() => setActiveTab("schedule")} />
           <NavTab label="ANALYTICS" active={activeTab === "analytics"} onClick={() => setActiveTab("analytics")} />
         </div>
         <div style={S.navRight}>
@@ -386,6 +398,8 @@ export default function Home() {
             </div>
           </div>
           </>
+          ) : activeTab === "schedule" ? (
+            <ScheduleView analytics={analytics} day={day} currentPhase={currentPhase} />
           ) : (
             <AnalyticsDashboard analytics={analytics} />
           )}
@@ -781,6 +795,264 @@ function AnalyticsDashboard({ analytics }) {
             {baseline}
           </svg>
         </div>
+      </div>
+    </div>
+  );
+}
+
+/* ───────────────────── schedule view ───────────────────── */
+
+function ScheduleView({ analytics, day, currentPhase }) {
+  const W = 760, H = 280;
+  const P = { t: 32, r: 20, b: 36, l: 110 };
+  const iW = W - P.l - P.r;
+  const iH = H - P.t - P.b;
+  const barH = iH / GANTT_PHASES.length;
+  const barPad = 6;
+
+  const dayToX = (d) => P.l + ((d - 1) / (TOTAL_DAYS - 1)) * iW;
+  const todayX = dayToX(day);
+
+  const conflictDays = analytics
+    .filter((a) => a.conflictCount > 0)
+    .map((a) => a.day);
+
+  const firstConflict = analytics.find((a) => a.conflictCount > 0);
+  const peakRiskEntry = analytics.length > 0
+    ? analytics.reduce((best, a) => (a.costImpact > (best?.costImpact || 0) ? a : best), analytics[0])
+    : null;
+  const critMaterial = analytics.find((a) =>
+    (a.materials || []).some((m) => m.pct < 20)
+  );
+
+  const milestones = [
+    { label: "Project Start", value: "Day 1", icon: "🚀", color: "#3b82f6" },
+    {
+      label: "First Conflict Detected",
+      value: firstConflict ? `Day ${firstConflict.day}` : "—",
+      icon: "⚠️",
+      color: "#f59e0b",
+    },
+    {
+      label: "Peak Risk Day",
+      value: peakRiskEntry && peakRiskEntry.costImpact > 0 ? `Day ${peakRiskEntry.day}` : "—",
+      icon: "📈",
+      color: "#ef4444",
+    },
+    {
+      label: "Critical Material Warning",
+      value: critMaterial ? `Day ${critMaterial.day}` : "—",
+      icon: "📦",
+      color: "#f97316",
+    },
+    {
+      label: "Current Phase",
+      value: currentPhase,
+      icon: "🏗️",
+      color: "#60a5fa",
+    },
+  ];
+
+  const monthTicks = [1, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334, 365];
+  const monthLabels = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec", ""];
+
+  return (
+    <div style={{ flex: 1, overflow: "auto", background: "#080c18", padding: "20px 24px", display: "flex", flexDirection: "column", gap: 16 }}>
+      {/* Header */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <div>
+          <div style={{ fontSize: 16, fontWeight: 700, color: "#f1f5f9", marginBottom: 2 }}>Project Schedule</div>
+          <div style={{ fontSize: 12, color: "#475569" }}>365-day construction timeline — Day {day}</div>
+        </div>
+        <div style={{ display: "flex", gap: 12 }}>
+          {GANTT_PHASES.map((p) => (
+            <div key={p.label} style={{ display: "flex", alignItems: "center", gap: 5 }}>
+              <div style={{ width: 10, height: 10, borderRadius: 3, background: p.color }} />
+              <span style={{ fontSize: 11, color: "#64748b" }}>{p.label}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Gantt Chart */}
+      <div style={{ background: "#0f1520", borderRadius: 10, border: "1px solid #1e293b", padding: "16px 18px" }}>
+        <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ display: "block" }}>
+          {/* Month gridlines + labels */}
+          {monthTicks.map((d, i) => {
+            const x = dayToX(d);
+            return (
+              <g key={d}>
+                <line x1={x} y1={P.t - 4} x2={x} y2={P.t + iH} stroke="#1e293b" strokeWidth="1" />
+                {monthLabels[i] && (
+                  <text x={x + 4} y={P.t + iH + 14} fill="#475569" fontSize="9" fontFamily="monospace">{monthLabels[i]}</text>
+                )}
+              </g>
+            );
+          })}
+
+          {/* Phase bars */}
+          {GANTT_PHASES.map((phase, i) => {
+            const x1 = dayToX(phase.start);
+            const x2 = dayToX(phase.end);
+            const y = P.t + i * barH + barPad;
+            const h = barH - barPad * 2;
+            const isActive = day >= phase.start && day <= phase.end;
+            const isPast = day > phase.end;
+
+            return (
+              <g key={phase.label}>
+                {/* Phase label */}
+                <text
+                  x={P.l - 10}
+                  y={y + h / 2 + 4}
+                  fill={isActive ? "#f1f5f9" : "#64748b"}
+                  fontSize="11"
+                  fontWeight={isActive ? "700" : "500"}
+                  textAnchor="end"
+                  fontFamily="inherit"
+                >
+                  {phase.label}
+                </text>
+
+                {/* Background track */}
+                <rect x={P.l} y={y} width={iW} height={h} rx={4} fill="#1e293b" opacity="0.3" />
+
+                {/* Phase bar */}
+                <rect
+                  x={x1}
+                  y={y}
+                  width={x2 - x1}
+                  height={h}
+                  rx={4}
+                  fill={phase.color}
+                  opacity={isPast ? 0.4 : isActive ? 0.9 : 0.55}
+                />
+
+                {/* Progress fill within active phase */}
+                {isActive && (
+                  <rect
+                    x={x1}
+                    y={y}
+                    width={Math.max(0, todayX - x1)}
+                    height={h}
+                    rx={4}
+                    fill={phase.color}
+                    opacity={1}
+                  />
+                )}
+
+                {/* Day range label */}
+                <text
+                  x={x1 + (x2 - x1) / 2}
+                  y={y + h / 2 + 3.5}
+                  fill="#fff"
+                  fontSize="9"
+                  fontWeight="600"
+                  textAnchor="middle"
+                  fontFamily="monospace"
+                  opacity={0.8}
+                >
+                  {phase.start}–{phase.end}
+                </text>
+              </g>
+            );
+          })}
+
+          {/* Conflict markers */}
+          {conflictDays.map((cd, i) => {
+            const cx = dayToX(cd);
+            const phaseIdx = GANTT_PHASES.findIndex((p) => cd >= p.start && cd <= p.end);
+            if (phaseIdx < 0) return null;
+            const cy = P.t + phaseIdx * barH + barPad - 5;
+            return (
+              <circle
+                key={`c-${i}`}
+                cx={cx}
+                cy={cy}
+                r={3.5}
+                fill="#ef4444"
+                stroke="#080c18"
+                strokeWidth="1.5"
+              />
+            );
+          })}
+
+          {/* Today line */}
+          <line
+            x1={todayX}
+            y1={P.t - 12}
+            x2={todayX}
+            y2={P.t + iH + 4}
+            stroke="#ef4444"
+            strokeWidth="2"
+            strokeDasharray="4 3"
+          />
+          <rect x={todayX - 18} y={P.t - 24} width={36} height={14} rx={3} fill="#ef4444" />
+          <text
+            x={todayX}
+            y={P.t - 14}
+            fill="#fff"
+            fontSize="8"
+            fontWeight="700"
+            textAnchor="middle"
+            fontFamily="monospace"
+          >
+            DAY {day}
+          </text>
+        </svg>
+      </div>
+
+      {/* Milestone Table */}
+      <div style={{ background: "#0f1520", borderRadius: 10, border: "1px solid #1e293b", overflow: "hidden" }}>
+        <div style={{ padding: "12px 18px", borderBottom: "1px solid #1e293b" }}>
+          <span style={{ fontSize: 11, fontWeight: 700, color: "#64748b", letterSpacing: "0.06em" }}>PROJECT MILESTONES</span>
+        </div>
+        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+          <thead>
+            <tr>
+              {["", "Milestone", "Status / Value", ""].map((h, i) => (
+                <th
+                  key={i}
+                  style={{
+                    padding: "8px 18px",
+                    textAlign: "left",
+                    fontSize: 10,
+                    fontWeight: 600,
+                    color: "#334155",
+                    borderBottom: "1px solid #1e293b",
+                    letterSpacing: "0.06em",
+                  }}
+                >
+                  {h}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {milestones.map((m, i) => (
+              <tr key={i} style={{ borderBottom: i < milestones.length - 1 ? "1px solid #1e293b20" : "none" }}>
+                <td style={{ padding: "10px 18px", fontSize: 16, width: 44 }}>{m.icon}</td>
+                <td style={{ padding: "10px 0", fontSize: 13, fontWeight: 600, color: "#e2e8f0" }}>{m.label}</td>
+                <td style={{ padding: "10px 18px" }}>
+                  <span style={{
+                    fontSize: 12,
+                    fontWeight: 700,
+                    color: m.value === "—" ? "#334155" : m.color,
+                    fontVariantNumeric: "tabular-nums",
+                    fontFamily: "monospace",
+                  }}>
+                    {m.value}
+                  </span>
+                </td>
+                <td style={{ padding: "10px 18px", width: 24 }}>
+                  {m.value !== "—" && (
+                    <div style={{ width: 8, height: 8, borderRadius: "50%", background: m.color, opacity: 0.6 }} />
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
     </div>
   );
