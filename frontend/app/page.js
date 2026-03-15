@@ -42,6 +42,24 @@ const INITIAL_MESSAGES = [
 
 const API_BASE = "http://localhost:8000";
 
+const BUILDING_STAGES = [
+  { maxPct: 15, bg: "#1e293b", border: "#334155", dashed: true, label: "Excavation" },
+  { maxPct: 30, bg: "#92400e20", border: "#92400e", dashed: false, label: "Foundation" },
+  { maxPct: 55, bg: "#1e3a5f", border: "#3b82f6", dashed: false, label: "Structure" },
+  { maxPct: 75, bg: "#78350f20", border: "#f59e0b", dashed: false, label: "MEP" },
+  { maxPct: 90, bg: "#334155", border: "#94a3b8", dashed: false, label: "Finishing" },
+  { maxPct: Infinity, bg: "#166534", border: "#22c55e", dashed: false, label: "Complete" },
+];
+
+const getBuildingStage = (pct) =>
+  BUILDING_STAGES.find((s) => pct <= s.maxPct) || BUILDING_STAGES[5];
+
+const cellXY = (i) => [i % GRID, Math.floor(i / GRID)];
+const zoneIdAt = (i) => `zone-${i % GRID}-${Math.floor(i / GRID)}`;
+const simZoneId = (type, x, y) => `${type}-${x}-${y}`;
+
+const ENTRY_ARROWS = { right: "\u25b8", left: "\u25c2", down: "\u25be", up: "\u25b4" };
+
 const MD_COMPONENTS = {
   p: ({ children }) => <p style={{ margin: "4px 0" }}>{children}</p>,
   strong: ({ children }) => <strong style={{ fontWeight: 600, color: "#f1f5f9" }}>{children}</strong>,
@@ -73,6 +91,8 @@ export default function Home() {
   const [analytics, setAnalytics] = useState([]);
   const [hasNewAlert, setHasNewAlert] = useState(false);
   const [projectDuration, setProjectDuration] = useState(DEFAULT_DURATION);
+  const [simulationState, setSimulationState] = useState(null);
+  const [simConflicts, setSimConflicts] = useState([]);
   const scrollRef = useRef(null);
   const simulatingRef = useRef(false);
   const skipInProgressRef = useRef(false);
@@ -95,6 +115,8 @@ export default function Home() {
     setDay(1);
     setAnalytics([]);
     setMessages([...INITIAL_MESSAGES]);
+    setSimulationState(null);
+    setSimConflicts([]);
   };
 
   useEffect(() => {
@@ -128,6 +150,8 @@ export default function Home() {
       .then((res) => res.ok ? res.json() : null)
       .then((data) => {
         if (data) {
+          setSimulationState(data.simulation || null);
+          setSimConflicts(data.conflicts || []);
           setAnalytics((prev) => [...prev, {
             day,
             conflictCount: data.conflicts?.length || 0,
@@ -194,6 +218,8 @@ export default function Home() {
     setDay(1);
     setMessages([...INITIAL_MESSAGES]);
     setAnalytics([]);
+    setSimulationState(null);
+    setSimConflicts([]);
   };
 
   const skipDays = (n) => {
@@ -208,6 +234,8 @@ export default function Home() {
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
         if (data) {
+          setSimulationState(data.simulation || null);
+          setSimConflicts(data.conflicts || []);
           setAnalytics((prev) => [...prev, {
             day: target,
             conflictCount: data.conflicts?.length || 0,
@@ -234,6 +262,8 @@ export default function Home() {
     setDay(1);
     setAnalytics([]);
     setMessages([...INITIAL_MESSAGES]);
+    setSimulationState(null);
+    setSimConflicts([]);
   };
 
   const progress = ((day - 1) / (projectDuration - 1)) * 100;
@@ -243,6 +273,70 @@ export default function Home() {
     count: cells.filter((c) => c?.id === z.id).length,
   }));
   const currentPhase = [...ganttPhases].reverse().find((gp) => day >= gp.start)?.label ?? "Pre-Construction";
+
+  /* ────────── grid simulation-driven visuals ────────── */
+  const buildPct = (day / projectDuration) * 100;
+
+  const roadAdjMap = {};
+  cells.forEach((c, i) => {
+    if (c?.id !== "road") return;
+    const [x, y] = cellXY(i);
+    roadAdjMap[i] = {
+      up: y > 0 && cells[(y - 1) * GRID + x]?.id === "road",
+      down: y < GRID - 1 && cells[(y + 1) * GRID + x]?.id === "road",
+      left: x > 0 && cells[y * GRID + (x - 1)]?.id === "road",
+      right: x < GRID - 1 && cells[y * GRID + (x + 1)]?.id === "road",
+    };
+  });
+
+  const simCranes = simulationState?.cranes || [];
+  const activeCranes = simCranes.filter((c) => c.active);
+  const blockedRoadCells = new Set();
+  cells.forEach((c, i) => {
+    if (c?.id !== "road") return;
+    const [x, y] = cellXY(i);
+    for (const crane of activeCranes) {
+      if ((crane.swing_radius || 0) + 0.5 - Math.sqrt((crane.x - x) ** 2 + (crane.y - y) ** 2) > 0) {
+        blockedRoadCells.add(i);
+        break;
+      }
+    }
+  });
+
+  const matStatusByZone = {};
+  Object.values(simulationState?.materials || {}).forEach((m) => {
+    (matStatusByZone[m.zone_id] ||= []).push(m);
+  });
+
+  const workersByZone = simulationState?.workers || {};
+
+  const craneByPos = {};
+  simCranes.forEach((c) => { craneByPos[`${c.x}-${c.y}`] = c; });
+
+  const hasActiveDelivery = Object.values(
+    simulationState?.materials_consumed || {},
+  ).some((v) => v > 0);
+
+  const roadIndices = [];
+  const matCellIndices = [];
+  cells.forEach((c, i) => {
+    if (c?.id === "road") roadIndices.push(i);
+    else if (c?.id === "materials") matCellIndices.push(i);
+  });
+  const deliveryRoutes = matCellIndices
+    .map((mi) => {
+      const [mx, my] = cellXY(mi);
+      let best = -1, bestD = Infinity;
+      for (const ri of roadIndices) {
+        const [rx, ry] = cellXY(ri);
+        const d = Math.abs(rx - mx) + Math.abs(ry - my);
+        if (d < bestD) { bestD = d; best = ri; }
+      }
+      if (best < 0) return null;
+      const [rx, ry] = cellXY(best);
+      return { x1: rx * 46 + 23, y1: ry * 46 + 23, x2: mx * 46 + 23, y2: my * 46 + 23 };
+    })
+    .filter(Boolean);
 
   /* ────────── row / col labels ────────── */
   const colLabels = Array.from({ length: GRID }, (_, i) => String.fromCharCode(65 + i));
@@ -357,64 +451,210 @@ export default function Home() {
               </div>
 
               {/* The Grid */}
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: `repeat(${GRID}, 1fr)`,
-                  width: GRID * 46,
-                  border: "1px solid #1e293b",
-                  borderRadius: 8,
-                  overflow: "hidden",
-                }}
-              >
-                {cells.map((cell, i) => {
-                  const isHover = hoveredCell === i && activeTool && !cell;
-                  const hoverZone = isHover ? ZONES.find((z) => z.id === activeTool) : null;
-                  return (
-                    <div
-                      key={i}
-                      onClick={() => placeZone(i)}
-                      onMouseEnter={() => setHoveredCell(i)}
-                      onMouseLeave={() => setHoveredCell(-1)}
-                      style={{
-                        width: 46,
-                        height: 46,
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        background: cell
-                          ? cell.bg
-                          : isHover
-                          ? `${hoverZone.color}0a`
-                          : "#0c1221",
-                        borderRight: "1px solid #1e293b30",
-                        borderBottom: "1px solid #1e293b30",
-                        cursor: activeTool ? "crosshair" : "default",
-                        transition: "background 0.1s",
-                        position: "relative",
-                      }}
-                    >
-                      {cell && (
-                        <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
+              <div style={{ position: "relative" }}>
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: `repeat(${GRID}, 1fr)`,
+                    width: GRID * 46,
+                    border: "1px solid #1e293b",
+                    borderRadius: 8,
+                    overflow: "hidden",
+                  }}
+                >
+                  {cells.map((cell, i) => {
+                    const isHover = hoveredCell === i && activeTool && !cell;
+                    const hoverZone = isHover ? ZONES.find((z) => z.id === activeTool) : null;
+                    const [cx, cy] = cellXY(i);
+
+                    let cellBg = cell ? cell.bg : isHover ? `${hoverZone.color}0a` : "#0c1221";
+                    let cellBorderR = "1px solid #1e293b30";
+                    let cellBorderB = "1px solid #1e293b30";
+                    let cellAnim = undefined;
+                    let content = null;
+
+                    if (cell?.id === "building") {
+                      const stage = getBuildingStage(buildPct);
+                      cellBg = stage.bg;
+                      const bdr = `1.5px ${stage.dashed ? "dashed" : "solid"} ${stage.border}`;
+                      cellBorderR = bdr;
+                      cellBorderB = bdr;
+                      content = (
+                        <>
+                          <span style={{ fontSize: 15, lineHeight: 1 }}>{cell.emoji}</span>
+                          <span style={{ fontSize: 7, fontWeight: 700, color: stage.border, lineHeight: 1, marginTop: 1 }}>
+                            {stage.label}
+                          </span>
+                          <div style={{ position: "absolute", bottom: 3, left: 5, right: 5, height: 2, background: "#0c122180", borderRadius: 1 }}>
+                            <div style={{ width: `${Math.min(buildPct, 100)}%`, height: "100%", background: stage.border, borderRadius: 1, transition: "width 0.3s" }} />
+                          </div>
+                        </>
+                      );
+
+                    } else if (cell?.id === "materials") {
+                      const mats = matStatusByZone[simZoneId("materials", cx, cy)] || [];
+                      const avgPct = mats.length > 0 ? mats.reduce((s, m) => s + m.pct_remaining, 0) / mats.length : 100;
+                      const matLow = mats.some((m) => m.pct_remaining < 20);
+                      const barClr = avgPct > 50 ? "#22c55e" : avgPct > 20 ? "#eab308" : "#ef4444";
+                      if (matLow) {
+                        cellBorderR = "1.5px solid #ef4444";
+                        cellBorderB = cellBorderR;
+                        cellAnim = "pulse-red 1.5s infinite";
+                      }
+                      content = (
+                        <>
+                          <span style={{ fontSize: 15, lineHeight: 1 }}>{cell.emoji}</span>
+                          <span style={{ fontSize: 7, color: barClr, fontWeight: 600, lineHeight: 1, marginTop: 1 }}>
+                            {Math.round(avgPct)}%
+                          </span>
+                          <div style={{ position: "absolute", bottom: 3, left: 5, right: 5, height: 3, background: "#1e293b", borderRadius: 1.5 }}>
+                            <div style={{ width: `${avgPct}%`, height: "100%", background: barClr, borderRadius: 1.5, transition: "width 0.3s" }} />
+                          </div>
+                        </>
+                      );
+
+                    } else if (cell?.id === "workers") {
+                      const wCount = workersByZone[simZoneId("workers", cx, cy)]?.count || 0;
+                      content = wCount > 0 ? (
+                        <>
+                          <span style={{ fontSize: 13, fontWeight: 800, color: "#60a5fa", lineHeight: 1 }}>{wCount}</span>
+                          <span style={{ fontSize: 6, color: "#64748b", fontWeight: 600, lineHeight: 1, marginTop: 1, letterSpacing: "0.04em" }}>CREW</span>
+                        </>
+                      ) : (
+                        <span style={{ fontSize: 17, lineHeight: 1, opacity: 0.3 }}>{cell.emoji}</span>
+                      );
+
+                    } else if (cell?.id === "crane") {
+                      const craneData = craneByPos[`${cx}-${cy}`];
+                      const isBroken = craneData?.breakdown || false;
+                      content = (
+                        <>
                           <span style={{ fontSize: 17, lineHeight: 1 }}>{cell.emoji}</span>
-                          <div
-                            style={{
-                              width: 8,
-                              height: 2,
-                              borderRadius: 1,
-                              background: cell.color,
-                              marginTop: 2,
-                              opacity: 0.5,
-                            }}
-                          />
-                        </div>
-                      )}
-                      {isHover && !cell && (
-                        <span style={{ fontSize: 14, opacity: 0.25 }}>{hoverZone.emoji}</span>
-                      )}
-                    </div>
-                  );
-                })}
+                          <div style={{ width: 8, height: 2, borderRadius: 1, background: isBroken ? "#ef4444" : cell.color, marginTop: 2, opacity: 0.5 }} />
+                          {isBroken && (
+                            <div style={{
+                              position: "absolute", inset: 0, background: "#ef444435",
+                              display: "flex", alignItems: "center", justifyContent: "center",
+                            }}>
+                              <span style={{ color: "#ef4444", fontWeight: 900, fontSize: 20, lineHeight: 1, textShadow: "0 0 6px #ef444480" }}>{"\u2715"}</span>
+                            </div>
+                          )}
+                        </>
+                      );
+
+                    } else if (cell?.id === "road") {
+                      const adj = roadAdjMap[i] || {};
+                      const isEdge = cx === 0 || cx === GRID - 1 || cy === 0 || cy === GRID - 1;
+                      const isBlocked = blockedRoadCells.has(i);
+                      const entryDir = isEdge
+                        ? cx === 0 ? "right" : cx === GRID - 1 ? "left" : cy === 0 ? "down" : "up"
+                        : null;
+
+                      cellBg = isBlocked ? "#ef444420" : isEdge ? "#334155" : "#293548";
+                      if (isBlocked) {
+                        cellBorderR = "1.5px solid #ef4444";
+                        cellBorderB = cellBorderR;
+                      } else if (isEdge) {
+                        cellBorderR = "1px solid #475569";
+                        cellBorderB = cellBorderR;
+                      }
+                      if (hasActiveDelivery && !isBlocked) {
+                        cellAnim = "pulse-amber 2s infinite";
+                      }
+                      content = (
+                        <>
+                          {(adj.up || adj.down) && (
+                            <div style={{
+                              position: "absolute", left: "50%", top: adj.up ? 0 : "30%",
+                              bottom: adj.down ? 0 : "30%", width: 0,
+                              borderLeft: "1px dashed #94a3b830",
+                              transform: "translateX(-0.5px)", pointerEvents: "none",
+                            }} />
+                          )}
+                          {(adj.left || adj.right) && (
+                            <div style={{
+                              position: "absolute", top: "50%", left: adj.left ? 0 : "30%",
+                              right: adj.right ? 0 : "30%", height: 0,
+                              borderTop: "1px dashed #94a3b830",
+                              transform: "translateY(-0.5px)", pointerEvents: "none",
+                            }} />
+                          )}
+                          {isEdge && entryDir ? (
+                            <span style={{ fontSize: 14, color: "#94a3b8", fontWeight: 700, lineHeight: 1, zIndex: 1 }}>
+                              {ENTRY_ARROWS[entryDir]}
+                            </span>
+                          ) : (
+                            <span style={{ fontSize: 12, lineHeight: 1, opacity: 0.35, zIndex: 1 }}>{cell.emoji}</span>
+                          )}
+                          {isBlocked && (
+                            <div style={{
+                              position: "absolute", inset: 0, display: "flex",
+                              alignItems: "center", justifyContent: "center",
+                              background: "#ef444418", zIndex: 2,
+                            }}>
+                              <span style={{ fontSize: 14, lineHeight: 1 }}>{"\ud83d\udeab"}</span>
+                            </div>
+                          )}
+                        </>
+                      );
+
+                    } else if (cell) {
+                      content = (
+                        <>
+                          <span style={{ fontSize: 17, lineHeight: 1 }}>{cell.emoji}</span>
+                          <div style={{ width: 8, height: 2, borderRadius: 1, background: cell.color, marginTop: 2, opacity: 0.5 }} />
+                        </>
+                      );
+                    }
+
+                    return (
+                      <div
+                        key={i}
+                        onClick={() => placeZone(i)}
+                        onMouseEnter={() => setHoveredCell(i)}
+                        onMouseLeave={() => setHoveredCell(-1)}
+                        style={{
+                          width: 46,
+                          height: 46,
+                          display: "flex",
+                          flexDirection: "column",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          background: cellBg,
+                          borderRight: cellBorderR,
+                          borderBottom: cellBorderB,
+                          cursor: activeTool ? "crosshair" : "default",
+                          transition: "background 0.15s, border-color 0.15s",
+                          position: "relative",
+                          animation: cellAnim,
+                        }}
+                      >
+                        {content}
+                        {isHover && !cell && (
+                          <span style={{ fontSize: 14, opacity: 0.25 }}>{hoverZone.emoji}</span>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+                {deliveryRoutes.length > 0 && (
+                  <svg
+                    style={{
+                      position: "absolute", top: 0, left: 0,
+                      width: GRID * 46, height: GRID * 46,
+                      pointerEvents: "none",
+                    }}
+                  >
+                    {deliveryRoutes.map((r, idx) => (
+                      <line
+                        key={idx}
+                        x1={r.x1} y1={r.y1} x2={r.x2} y2={r.y2}
+                        stroke="#f9731640" strokeWidth="1.5"
+                        strokeDasharray="4 3"
+                      />
+                    ))}
+                  </svg>
+                )}
               </div>
             </div>
 
