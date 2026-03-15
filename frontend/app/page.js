@@ -748,6 +748,107 @@ export default function Home() {
             <AnalyticsDashboard analytics={analytics} />
           )}
 
+          {/* Cascade Impact Panel */}
+          {conflictPaused && !isPlaying && (() => {
+            const cascadeConflicts = simConflicts.filter(
+              (c) => (c.schedule_impact_days || 0) > 0 || (c.cost_impact || 0) > 5000
+            );
+            if (cascadeConflicts.length === 0) return null;
+            const totalDays = cascadeConflicts.reduce((s, c) => s + (c.schedule_impact_days || 0), 0);
+            const totalCost = cascadeConflicts.reduce((s, c) => s + (c.cost_impact || 0), 0);
+            const fmtUsd = (v) => "$" + v.toLocaleString("en-US");
+            const typeLabel = (t) => t.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+            return (
+              <div style={{
+                maxHeight: 120,
+                background: "#0f1520",
+                border: "1px solid #ef444420",
+                borderLeft: "3px solid #ef4444",
+                display: "flex",
+                flexDirection: "column",
+                flexShrink: 0,
+                overflow: "hidden",
+              }}>
+                <div style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  padding: "6px 16px",
+                  borderBottom: "1px solid #1e293b",
+                  flexShrink: 0,
+                }}>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: "#ef4444", letterSpacing: "0.06em" }}>
+                    {"⚠️"} CASCADE IMPACT — DAY {day}
+                  </span>
+                  <button
+                    onClick={() => { setIsPlaying(true); setConflictPaused(false); }}
+                    style={{
+                      fontSize: 11, fontWeight: 600, color: "#fff",
+                      background: "linear-gradient(135deg, #3b82f6, #2563eb)",
+                      border: "none", borderRadius: 5, padding: "4px 12px",
+                      cursor: "pointer", fontFamily: "inherit",
+                      boxShadow: "0 0 12px #3b82f630",
+                    }}
+                  >
+                    Resume Simulation
+                  </button>
+                </div>
+                <div style={{ flex: 1, overflowY: "auto", padding: "4px 16px 6px" }}>
+                  {cascadeConflicts.map((c, i) => (
+                    <div key={i} style={{
+                      display: "flex", alignItems: "center", gap: 8,
+                      padding: "3px 0",
+                      borderBottom: i < cascadeConflicts.length - 1 ? "1px solid #1e293b30" : "none",
+                    }}>
+                      <span style={{
+                        fontSize: 10, fontWeight: 600, color: "#f59e0b",
+                        background: "#f59e0b15", borderRadius: 4, padding: "1px 6px",
+                        whiteSpace: "nowrap", flexShrink: 0,
+                      }}>
+                        {typeLabel(c.type)}
+                      </span>
+                      <span style={{ fontSize: 10, color: "#475569", flexShrink: 0 }}>→</span>
+                      {(c.schedule_impact_days || 0) > 0 && (
+                        <span style={{
+                          fontSize: 10, fontWeight: 700, color: "#ef4444",
+                          whiteSpace: "nowrap", flexShrink: 0,
+                        }}>
+                          +{c.schedule_impact_days}d delay
+                        </span>
+                      )}
+                      {(c.schedule_impact_days || 0) > 0 && (c.cost_impact || 0) > 0 && (
+                        <span style={{ fontSize: 10, color: "#334155", flexShrink: 0 }}>|</span>
+                      )}
+                      {(c.cost_impact || 0) > 0 && (
+                        <span style={{ fontSize: 10, fontWeight: 600, color: "#f97316", whiteSpace: "nowrap", flexShrink: 0 }}>
+                          {fmtUsd(c.cost_impact)}
+                        </span>
+                      )}
+                      <span style={{
+                        fontSize: 10, color: "#64748b", overflow: "hidden",
+                        textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0,
+                      }}>
+                        {c.message.replace(/^Day \d+:\s*/, "")}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+                <div style={{
+                  padding: "4px 16px 6px",
+                  borderTop: "1px solid #1e293b",
+                  display: "flex", gap: 16, flexShrink: 0,
+                }}>
+                  <span style={{ fontSize: 10, fontWeight: 700, color: "#ef4444" }}>
+                    Total schedule risk: +{totalDays} days
+                  </span>
+                  <span style={{ fontSize: 10, fontWeight: 700, color: "#f97316" }}>
+                    Total cost exposure: {fmtUsd(totalCost)}
+                  </span>
+                </div>
+              </div>
+            );
+          })()}
+
           {/* Timeline */}
           <div style={S.timeline}>
             <button onClick={rewind} style={{ ...S.playBtn, background: "#1e293b", fontSize: 14 }} title="Rewind to Day 1">
