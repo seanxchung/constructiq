@@ -96,6 +96,7 @@ export default function Home() {
   const [optimizerOpen, setOptimizerOpen] = useState(false);
   const [optimizerLoading, setOptimizerLoading] = useState(false);
   const [optimizerResult, setOptimizerResult] = useState(null);
+  const [conflictPaused, setConflictPaused] = useState(false);
   const scrollRef = useRef(null);
   const simulatingRef = useRef(false);
   const skipInProgressRef = useRef(false);
@@ -115,6 +116,7 @@ export default function Home() {
     if (dur === projectDuration) return;
     setProjectDuration(dur);
     setIsPlaying(false);
+    setConflictPaused(false);
     setDay(1);
     setAnalytics([]);
     setMessages([...INITIAL_MESSAGES]);
@@ -169,6 +171,8 @@ export default function Home() {
         if (hasHigh && data.ai_analysis) {
           setMessages((m) => [...m, { role: "ai", text: data.ai_analysis }]);
           triggerAlert();
+          setIsPlaying(false);
+          setConflictPaused(true);
         }
       })
       .catch(() => {})
@@ -218,6 +222,7 @@ export default function Home() {
 
   const rewind = () => {
     setIsPlaying(false);
+    setConflictPaused(false);
     setDay(1);
     setMessages([...INITIAL_MESSAGES]);
     setAnalytics([]);
@@ -262,6 +267,7 @@ export default function Home() {
   const clearSite = () => {
     setCells(Array(GRID * GRID).fill(null));
     setIsPlaying(false);
+    setConflictPaused(false);
     setDay(1);
     setAnalytics([]);
     setMessages([...INITIAL_MESSAGES]);
@@ -298,6 +304,7 @@ export default function Home() {
       });
       setCells(next);
       setIsPlaying(false);
+      setConflictPaused(false);
       setDay(1);
       setAnalytics([]);
       setSimulationState(null);
@@ -746,7 +753,11 @@ export default function Home() {
               ⏮
             </button>
             <button
-              onClick={() => setIsPlaying(!isPlaying)}
+              onClick={() => {
+                const next = !isPlaying;
+                setIsPlaying(next);
+                if (next) setConflictPaused(false);
+              }}
               style={{
                 ...S.playBtn,
                 background: isPlaying
@@ -757,6 +768,22 @@ export default function Home() {
             >
               {isPlaying ? "⏸" : "▶"}
             </button>
+            {conflictPaused && !isPlaying && (
+              <span style={{
+                fontSize: 11,
+                fontWeight: 700,
+                color: "#ef4444",
+                background: "#ef444418",
+                border: "1px solid #ef444440",
+                borderRadius: 6,
+                padding: "4px 10px",
+                whiteSpace: "nowrap",
+                animation: "pulse-red 1.5s infinite",
+                flexShrink: 0,
+              }}>
+                PAUSED &mdash; conflict detected
+              </span>
+            )}
             <div style={S.dayInfo}>
               <span style={{ fontSize: 15, fontWeight: 700, color: "#f1f5f9" }}>
                 Day {day}
