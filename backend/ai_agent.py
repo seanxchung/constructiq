@@ -8,6 +8,7 @@ Powered by Claude via the Anthropic API. Provides two capabilities:
 from __future__ import annotations
 
 import json
+import math
 import os
 from typing import Any
 
@@ -192,13 +193,14 @@ def _build_layout_prompt(
     """Build the prompt that asks Claude for an optimal site layout as JSON."""
     col_labels = [chr(ord("A") + i) for i in range(grid_size)]
     col_list = ", ".join(col_labels)
+    num_worker_zones = math.ceil(num_workers / 25)
 
     return f"""You are Sean Chung, senior site superintendent. A project manager needs you to generate an optimal construction site layout.
 
 PROJECT PARAMETERS:
 - Building: {building_description}
 - Cranes: {num_cranes}
-- Workers (crew zones): {num_workers}
+- Place {num_worker_zones} worker zones, each representing 25 workers (total workforce: {num_workers} workers)
 - Material staging zones: {num_material_zones}
 - Project duration: {project_duration} days
 - Grid: {grid_size}x{grid_size} (columns {col_list}, rows 1–{grid_size})
@@ -264,6 +266,8 @@ def generate_optimal_layout(
         )
         zones = _request_layout(strict_prompt)
 
+    num_worker_zones = math.ceil(num_workers / 25)
+
     type_counts: dict[str, int] = {}
     for z in zones:
         type_counts[z["type"]] = type_counts.get(z["type"], 0) + 1
@@ -273,7 +277,12 @@ def generate_optimal_layout(
         f"Grid: {grid_size}x{grid_size} with {len(zones)} total zones placed.",
     ]
     for zone_type, count in sorted(type_counts.items()):
-        summary_parts.append(f"  {zone_type}: {count}")
+        if zone_type == "workers":
+            summary_parts.append(
+                f"  Worker zones: {count} (representing {num_workers} workers at 25 per zone)"
+            )
+        else:
+            summary_parts.append(f"  {zone_type}: {count}")
     summary_parts.append(
         f"Project duration: {project_duration} days. "
         "Cranes positioned for maximum building coverage; "

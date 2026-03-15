@@ -100,6 +100,7 @@ export default function Home() {
   const [projectsModalOpen, setProjectsModalOpen] = useState(false);
   const [savedProjects, setSavedProjects] = useState([]);
   const [projectNameInput, setProjectNameInput] = useState("");
+  const [optimizerWorkers, setOptimizerWorkers] = useState(0);
   const scrollRef = useRef(null);
   const simulatingRef = useRef(false);
   const skipInProgressRef = useRef(false);
@@ -277,6 +278,7 @@ export default function Home() {
     setMessages([...INITIAL_MESSAGES]);
     setSimulationState(null);
     setSimConflicts([]);
+    setOptimizerWorkers(0);
   };
 
   const runOptimizer = async (formData) => {
@@ -313,12 +315,22 @@ export default function Home() {
       setAnalytics([]);
       setSimulationState(null);
       setSimConflicts([]);
+      setOptimizerWorkers(formData.workers);
 
-      const count = next.filter(Boolean).length;
-      setOptimizerResult({ success: true, count, reasoning: data.reasoning || "" });
+      const typeCounts = {};
+      next.forEach((c) => { if (c) typeCounts[c.id] = (typeCounts[c.id] || 0) + 1; });
+      const parts = [];
+      if (typeCounts.crane) parts.push(`${typeCounts.crane} crane${typeCounts.crane !== 1 ? "s" : ""}`);
+      if (typeCounts.workers) parts.push(`${typeCounts.workers} worker zone${typeCounts.workers !== 1 ? "s" : ""} (${formData.workers} workers)`);
+      if (typeCounts.materials) parts.push(`${typeCounts.materials} material zone${typeCounts.materials !== 1 ? "s" : ""}`);
+      if (typeCounts.building) parts.push(`${typeCounts.building} building tile${typeCounts.building !== 1 ? "s" : ""}`);
+      if (typeCounts.road) parts.push(`${typeCounts.road} access road${typeCounts.road !== 1 ? "s" : ""}`);
+      const breakdown = parts.join(", ");
+
+      setOptimizerResult({ success: true, breakdown, reasoning: data.reasoning || "" });
       setMessages((m) => [
         ...m,
-        { role: "ai", text: `Layout generated. I've placed ${count} zones based on construction best practices. ${data.reasoning || ""}` },
+        { role: "ai", text: `Layout generated: ${breakdown} placed based on construction best practices. ${data.reasoning || ""}` },
       ]);
     } catch {
       setOptimizerResult({ success: false, error: "Failed to generate layout. Check that the backend is running." });
@@ -375,6 +387,7 @@ export default function Home() {
       setSimulationState(null);
       setSimConflicts([]);
       setProjectsModalOpen(false);
+      setOptimizerWorkers(0);
       setMessages((m) => [
         ...m,
         { role: "ai", text: `Loaded project "${data.name}". ${(data.zones || []).length} zones restored. Ready to simulate.` },
@@ -663,15 +676,24 @@ export default function Home() {
                       );
 
                     } else if (cell?.id === "workers") {
-                      const wCount = workersByZone[simZoneId("workers", cx, cy)]?.count || 0;
-                      content = wCount > 0 ? (
-                        <>
-                          <span style={{ fontSize: 13, fontWeight: 800, color: "#60a5fa", lineHeight: 1 }}>{wCount}</span>
-                          <span style={{ fontSize: 6, color: "#64748b", fontWeight: 600, lineHeight: 1, marginTop: 1, letterSpacing: "0.04em" }}>CREW</span>
-                        </>
-                      ) : (
-                        <span style={{ fontSize: 17, lineHeight: 1, opacity: 0.3 }}>{cell.emoji}</span>
-                      );
+                      if (simulationState) {
+                        const wCount = workersByZone[simZoneId("workers", cx, cy)]?.count || 0;
+                        content = (
+                          <>
+                            <span style={{ fontSize: 13, fontWeight: 800, color: "#60a5fa", lineHeight: 1 }}>{wCount}</span>
+                            <span style={{ fontSize: 6, color: "#64748b", fontWeight: 600, lineHeight: 1, marginTop: 1, letterSpacing: "0.04em" }}>CREW</span>
+                          </>
+                        );
+                      } else {
+                        const numWZ = cells.filter((c) => c?.id === "workers").length;
+                        const cap = numWZ > 0 && optimizerWorkers > 0 ? Math.round(optimizerWorkers / numWZ) : 25;
+                        content = (
+                          <>
+                            <span style={{ fontSize: 13, fontWeight: 800, color: "#3b82f6", lineHeight: 1 }}>{cap}</span>
+                            <span style={{ fontSize: 6, color: "#64748b", fontWeight: 600, lineHeight: 1, marginTop: 1, letterSpacing: "0.04em" }}>CAP</span>
+                          </>
+                        );
+                      }
 
                     } else if (cell?.id === "crane") {
                       const craneData = craneByPos[`${cx}-${cy}`];
@@ -1318,12 +1340,13 @@ function OptimizerModal({ loading, result, onGenerate, onClose }) {
               />
             </div>
             <div>
-              <label style={labelStyle}>Total workers</label>
+              <label style={labelStyle}>Total workers available</label>
               <input
                 type="number" min={1} max={200} value={workers}
                 onChange={(e) => setWorkers(Number(e.target.value))}
                 style={inputStyle}
               />
+              <span style={{ fontSize: 10, color: "#475569", marginTop: 3, display: "block" }}>Each worker zone holds up to 25 workers</span>
             </div>
             <div>
               <label style={labelStyle}>Material storage zones</label>
@@ -1345,7 +1368,7 @@ function OptimizerModal({ loading, result, onGenerate, onClose }) {
               color: result.success ? "#4ade80" : "#fca5a5",
             }}>
               {result.success
-                ? `Layout generated. Mike has placed ${result.count} zones based on construction best practices.`
+                ? `Layout generated: ${result.breakdown} placed based on construction best practices.`
                 : result.error}
             </div>
           )}
