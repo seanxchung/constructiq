@@ -36,7 +36,7 @@ const buildGanttPhases = (totalDays) => {
 };
 
 const INITIAL_MESSAGES = [
-  { role: "ai", text: "Good morning. I'm Mike Callahan, your AI construction advisor. I've analyzed the site geotechnical report and I'm ready to help you optimize this build from day one." },
+  { role: "ai", text: "Good morning. I'm Sean Chung, your AI construction advisor. I've analyzed the site geotechnical report and I'm ready to help you optimize this build from day one." },
   { role: "ai", text: "Recommendation: Start by laying Access Roads along the perimeter for logistics flow, then position Cranes for maximum lift coverage. I'll flag conflicts in real-time." },
 ];
 
@@ -1069,7 +1069,7 @@ export default function Home() {
             <div style={S.avatar}>MC</div>
             <div>
               <div style={{ fontSize: 14, fontWeight: 600, color: "#f1f5f9" }}>
-                Mike Callahan
+                Sean Chung
               </div>
               <div style={{ fontSize: 11, color: "#64748b" }}>
                 AI Construction Advisor
@@ -1124,7 +1124,7 @@ export default function Home() {
                 >
                   {msg.role === "ai" && (
                     <div style={{ fontSize: 11, fontWeight: 600, color: "#60a5fa", marginBottom: 3 }}>
-                      Mike Callahan
+                      Sean Chung
                     </div>
                   )}
                   {msg.role === "ai" ? (

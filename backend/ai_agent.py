@@ -189,7 +189,7 @@ def _build_layout_prompt(
     col_labels = [chr(ord("A") + i) for i in range(grid_size)]
     col_list = ", ".join(col_labels)
 
-    return f"""You are Mike Callahan, senior site superintendent. A project manager needs you to generate an optimal construction site layout.
+    return f"""You are Sean Chung, senior site superintendent. A project manager needs you to generate an optimal construction site layout.
 
 PROJECT PARAMETERS:
 - Building: {building_description}
