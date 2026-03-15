@@ -97,6 +97,9 @@ export default function Home() {
   const [optimizerLoading, setOptimizerLoading] = useState(false);
   const [optimizerResult, setOptimizerResult] = useState(null);
   const [conflictPaused, setConflictPaused] = useState(false);
+  const [projectsModalOpen, setProjectsModalOpen] = useState(false);
+  const [savedProjects, setSavedProjects] = useState([]);
+  const [projectNameInput, setProjectNameInput] = useState("");
   const scrollRef = useRef(null);
   const simulatingRef = useRef(false);
   const skipInProgressRef = useRef(false);
@@ -324,6 +327,68 @@ export default function Home() {
     }
   };
 
+  const fetchProjects = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/projects`);
+      if (res.ok) setSavedProjects(await res.json());
+    } catch {}
+  };
+
+  const saveProject = async () => {
+    const name = projectNameInput.trim();
+    if (!name) return;
+    try {
+      const res = await fetch(`${API_BASE}/api/projects/save`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, zones: buildZones(), project_duration: projectDuration }),
+      });
+      if (res.ok) {
+        setProjectNameInput("");
+        await fetchProjects();
+      }
+    } catch {}
+  };
+
+  const loadProject = async (project) => {
+    try {
+      const res = await fetch(`${API_BASE}/api/projects/load`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ project_id: project.id }),
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      const next = Array(GRID * GRID).fill(null);
+      (data.zones || []).forEach((z) => {
+        const zone = ZONES.find((def) => def.id === z.type);
+        if (!zone) return;
+        const idx = z.y * GRID + z.x;
+        if (idx >= 0 && idx < GRID * GRID) next[idx] = zone;
+      });
+      setCells(next);
+      if (data.project_duration) setProjectDuration(data.project_duration);
+      setIsPlaying(false);
+      setConflictPaused(false);
+      setDay(1);
+      setAnalytics([]);
+      setSimulationState(null);
+      setSimConflicts([]);
+      setProjectsModalOpen(false);
+      setMessages((m) => [
+        ...m,
+        { role: "ai", text: `Loaded project "${data.name}". ${(data.zones || []).length} zones restored. Ready to simulate.` },
+      ]);
+    } catch {}
+  };
+
+  const deleteProject = async (id) => {
+    try {
+      const res = await fetch(`${API_BASE}/api/projects/${id}`, { method: "DELETE" });
+      if (res.ok) await fetchProjects();
+    } catch {}
+  };
+
   const progress = ((day - 1) / (projectDuration - 1)) * 100;
   const placedCount = cells.filter(Boolean).length;
   const zoneCounts = ZONES.map((z) => ({
@@ -480,6 +545,19 @@ export default function Home() {
             >
               <span style={{ fontSize: 15 }}>{"✨"}</span>
               AI Optimize
+            </button>
+            <button
+              onClick={() => setProjectsModalOpen(true)}
+              style={{
+                ...S.toolBtn,
+                borderColor: "#3b82f6",
+                background: "#3b82f615",
+                color: "#60a5fa",
+                boxShadow: "0 0 12px #3b82f615",
+              }}
+            >
+              <span style={{ fontSize: 15 }}>{"\uD83D\uDCC1"}</span>
+              Projects
             </button>
             <div style={{ flex: 1 }} />
             <div style={S.zoneCounter}>
@@ -1099,6 +1177,19 @@ export default function Home() {
           onClose={() => setOptimizerOpen(false)}
         />
       )}
+
+      {projectsModalOpen && (
+        <ProjectsModal
+          projects={savedProjects}
+          nameInput={projectNameInput}
+          onNameChange={setProjectNameInput}
+          onSave={saveProject}
+          onLoad={loadProject}
+          onDelete={deleteProject}
+          onOpen={fetchProjects}
+          onClose={() => setProjectsModalOpen(false)}
+        />
+      )}
     </div>
   );
 }
@@ -1284,6 +1375,158 @@ function OptimizerModal({ loading, result, onGenerate, onClose }) {
             )}
           </button>
         </form>
+      </div>
+    </div>
+  );
+}
+
+/* ───────────────────── projects modal ───────────────────── */
+
+function ProjectsModal({ projects, nameInput, onNameChange, onSave, onLoad, onDelete, onOpen, onClose }) {
+  useEffect(() => { onOpen(); }, []);
+
+  const fmtDate = (iso) => {
+    try { return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }); }
+    catch { return "—"; }
+  };
+
+  const inputStyle = {
+    flex: 1,
+    height: 38,
+    padding: "0 12px",
+    borderRadius: 7,
+    background: "#0c1221",
+    border: "1px solid #1e293b",
+    color: "#e2e8f0",
+    fontSize: 13,
+    outline: "none",
+    fontFamily: "inherit",
+  };
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: "fixed", inset: 0, zIndex: 1000,
+        background: "rgba(0,0,0,0.7)", backdropFilter: "blur(4px)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          width: 520, maxHeight: "80vh", background: "#0f1520", borderRadius: 14,
+          border: "1px solid #1e293b", boxShadow: "0 24px 80px rgba(0,0,0,0.6)",
+          display: "flex", flexDirection: "column", overflow: "hidden",
+        }}
+      >
+        {/* Header */}
+        <div style={{
+          padding: "20px 24px 16px", borderBottom: "1px solid #1e293b",
+          display: "flex", alignItems: "center", justifyContent: "space-between",
+          flexShrink: 0,
+        }}>
+          <div style={{ fontSize: 16, fontWeight: 700, color: "#f1f5f9", display: "flex", alignItems: "center", gap: 8 }}>
+            <span>{"\uD83D\uDCC1"}</span> Projects
+          </div>
+          <button
+            onClick={onClose}
+            style={{
+              background: "none", border: "none", color: "#64748b",
+              fontSize: 18, cursor: "pointer", padding: "2px 6px",
+              borderRadius: 6, lineHeight: 1,
+            }}
+          >
+            {"\u2715"}
+          </button>
+        </div>
+
+        {/* Save Section */}
+        <div style={{
+          padding: "16px 24px", borderBottom: "1px solid #1e293b",
+          display: "flex", gap: 8, alignItems: "center", flexShrink: 0,
+        }}>
+          <input
+            value={nameInput}
+            onChange={(e) => onNameChange(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && onSave()}
+            placeholder="Project name..."
+            style={inputStyle}
+          />
+          <button
+            onClick={onSave}
+            disabled={!nameInput.trim()}
+            style={{
+              height: 38, borderRadius: 7, border: "none",
+              background: !nameInput.trim() ? "#1e293b" : "linear-gradient(135deg, #3b82f6, #2563eb)",
+              color: "#fff", fontSize: 13, fontWeight: 600,
+              padding: "0 18px", cursor: !nameInput.trim() ? "not-allowed" : "pointer",
+              fontFamily: "inherit", whiteSpace: "nowrap",
+              opacity: !nameInput.trim() ? 0.5 : 1,
+              boxShadow: !nameInput.trim() ? "none" : "0 0 12px #3b82f630",
+              transition: "all 0.15s",
+            }}
+          >
+            Save Current Layout
+          </button>
+        </div>
+
+        {/* Project List */}
+        <div style={{ flex: 1, overflowY: "auto", minHeight: 0 }}>
+          {projects.length === 0 ? (
+            <div style={{
+              padding: "40px 24px", textAlign: "center",
+              display: "flex", flexDirection: "column", alignItems: "center", gap: 8,
+            }}>
+              <span style={{ fontSize: 32, opacity: 0.4 }}>{"\uD83D\uDCC2"}</span>
+              <span style={{ fontSize: 13, color: "#475569", lineHeight: 1.5 }}>
+                No saved projects. Save your current layout to get started.
+              </span>
+            </div>
+          ) : (
+            projects.map((p) => (
+              <div
+                key={p.id}
+                style={{
+                  padding: "12px 24px",
+                  borderBottom: "1px solid #1e293b20",
+                  display: "flex", alignItems: "center", gap: 12,
+                }}
+              >
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: "#e2e8f0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {p.name}
+                  </div>
+                  <div style={{ fontSize: 11, color: "#475569", marginTop: 2 }}>
+                    {p.zone_count} zone{p.zone_count !== 1 ? "s" : ""} &middot; {fmtDate(p.created_at)}
+                  </div>
+                </div>
+                <button
+                  onClick={() => onLoad(p)}
+                  style={{
+                    fontSize: 11, fontWeight: 600, color: "#60a5fa",
+                    background: "#3b82f615", border: "1px solid #3b82f630",
+                    borderRadius: 5, padding: "5px 12px", cursor: "pointer",
+                    fontFamily: "inherit", transition: "all 0.15s",
+                  }}
+                >
+                  Load
+                </button>
+                <button
+                  onClick={() => onDelete(p.id)}
+                  style={{
+                    fontSize: 11, fontWeight: 600, color: "#ef4444",
+                    background: "transparent", border: "1px solid #ef444430",
+                    borderRadius: 5, padding: "5px 10px", cursor: "pointer",
+                    fontFamily: "inherit", transition: "all 0.15s",
+                  }}
+                >
+                  {"\u2715"}
+                </button>
+              </div>
+            ))
+          )}
+        </div>
       </div>
     </div>
   );

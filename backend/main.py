@@ -96,6 +96,16 @@ class OptimizeRequest(BaseModel):
     grid_size: int = Field(12, ge=4, description="Grid dimension (NxN)")
 
 
+class SaveProjectRequest(BaseModel):
+    name: str = Field(..., min_length=1, description="Project name")
+    zones: list[dict[str, Any]] = Field(..., description="Zone layout from the frontend board")
+    project_duration: int = Field(..., ge=1, description="Total project duration in days")
+
+
+class LoadProjectRequest(BaseModel):
+    project_id: str = Field(..., description="ID of the project to load")
+
+
 # ── Routes ───────────────────────────────────────────────────────────────────
 
 @app.get("/")
@@ -175,3 +185,52 @@ def ai_optimize(req: OptimizeRequest):
         raise HTTPException(status_code=502, detail=f"AI optimization error: {exc}")
 
     return result
+
+
+# ── Projects ──────────────────────────────────────────────────────────────────
+
+@app.get("/api/projects")
+def list_projects():
+    response = (
+        supabase.table("projects")
+        .select("id, name, zone_count, created_at, zones, project_duration")
+        .order("created_at", desc=True)
+        .execute()
+    )
+    return response.data
+
+
+@app.post("/api/projects/save")
+def save_project(req: SaveProjectRequest):
+    row = {
+        "name": req.name,
+        "zones": req.zones,
+        "project_duration": req.project_duration,
+        "zone_count": len(req.zones),
+    }
+    response = supabase.table("projects").insert(row).execute()
+    if not response.data:
+        raise HTTPException(status_code=500, detail="Failed to save project")
+    return response.data[0]
+
+
+@app.post("/api/projects/load")
+def load_project(req: LoadProjectRequest):
+    result = (
+        supabase.table("projects")
+        .select("*")
+        .eq("id", req.project_id)
+        .single()
+        .execute()
+    )
+    if not result.data:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return result.data
+
+
+@app.delete("/api/projects/{project_id}")
+def delete_project(project_id: str):
+    response = supabase.table("projects").delete().eq("id", project_id).execute()
+    if not response.data:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return {"ok": True}
