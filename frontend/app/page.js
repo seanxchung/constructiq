@@ -131,6 +131,7 @@ export default function Home() {
   useEffect(() => {
     if (!isPlaying) return;
     const id = setInterval(() => {
+      if (simulatingRef.current) return;
       setDay((d) => {
         if (d >= projectDuration) {
           setIsPlaying(false);
