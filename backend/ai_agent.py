@@ -155,17 +155,21 @@ def chat_with_agent(
     message: str,
     simulation_state: dict[str, Any],
     day: int,
+    current_conflicts: list[dict[str, Any]] | None = None,
 ) -> str:
     """Answer a project manager's question using live simulation state as context."""
     state_context = _format_state_context(simulation_state, day)
+    conflict_context = _format_conflicts(current_conflicts or [])
 
     user_prompt = f"""Here is the current site state you have access to:
 
 {state_context}
 
+{conflict_context}
+
 The project manager asks: {message}
 
-Answer using the actual data above. Be specific — cite zone names, material quantities, crane IDs, worker counts. If the question involves cost, give real dollar figures. If it involves safety, cite the relevant OSHA or ASME standard. Keep it concise and actionable."""
+Answer using the actual data above. Be specific — cite zone names, material quantities, crane IDs, worker counts. If the question involves cost, give real dollar figures. If it involves safety, cite the relevant OSHA or ASME standard. If there are active conflicts, factor them into your answer. Keep it concise and actionable."""
 
     response = client.messages.create(
         model=MODEL,

@@ -81,6 +81,7 @@ class ChatRequest(BaseModel):
     day: int = Field(..., ge=1)
     zones: Optional[list[dict[str, Any]]] = None
     project_duration: int = 180
+    current_conflicts: Optional[list[dict[str, Any]]] = None
 
 
 class ChatResponse(BaseModel):
@@ -163,7 +164,7 @@ def ai_chat(req: ChatRequest):
     state = run_simulation_tick(zones, req.day, req.project_duration)
 
     try:
-        reply = chat_with_agent(req.message, state, req.day)
+        reply = chat_with_agent(req.message, state, req.day, req.current_conflicts)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"AI agent error: {exc}")
 
