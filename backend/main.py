@@ -15,7 +15,7 @@ from simulation import (
     BASE_TASKS,
     DEFAULT_PROJECT_CONFIG,
 )
-from ai_agent import analyze_conflicts, chat_with_agent
+from ai_agent import analyze_conflicts, chat_with_agent, generate_optimal_layout
 
 load_dotenv()
 supabase: Client = create_client(
@@ -87,6 +87,15 @@ class ChatResponse(BaseModel):
     reply: str
 
 
+class OptimizeRequest(BaseModel):
+    building_description: str = Field(..., min_length=1, description="Description of the building / project")
+    num_cranes: int = Field(..., ge=1, description="Number of cranes on site")
+    num_workers: int = Field(..., ge=1, description="Number of worker zones")
+    num_material_zones: int = Field(..., ge=1, description="Number of material storage zones")
+    project_duration: int = Field(..., ge=1, description="Total project duration in days")
+    grid_size: int = Field(12, ge=4, description="Grid dimension (NxN)")
+
+
 # ── Routes ───────────────────────────────────────────────────────────────────
 
 @app.get("/")
@@ -149,3 +158,20 @@ def ai_chat(req: ChatRequest):
         raise HTTPException(status_code=502, detail=f"AI agent error: {exc}")
 
     return ChatResponse(reply=reply)
+
+
+@app.post("/api/ai/optimize")
+def ai_optimize(req: OptimizeRequest):
+    try:
+        result = generate_optimal_layout(
+            building_description=req.building_description,
+            num_cranes=req.num_cranes,
+            num_workers=req.num_workers,
+            num_material_zones=req.num_material_zones,
+            project_duration=req.project_duration,
+            grid_size=req.grid_size,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"AI optimization error: {exc}")
+
+    return result

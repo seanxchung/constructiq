@@ -42,6 +42,10 @@ body {
   50% { box-shadow: inset 0 0 8px 1px rgba(245, 158, 11, 0.25); }
 }
 
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
 input::placeholder {
   color: #475569;
 }
@@ -49,4 +53,7 @@ input::placeholder {
 input:focus {
   border-color: #3b82f6 !important;
   box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.15);
+}
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }

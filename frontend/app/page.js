@@ -93,6 +93,9 @@ export default function Home() {
   const [projectDuration, setProjectDuration] = useState(DEFAULT_DURATION);
   const [simulationState, setSimulationState] = useState(null);
   const [simConflicts, setSimConflicts] = useState([]);
+  const [optimizerOpen, setOptimizerOpen] = useState(false);
+  const [optimizerLoading, setOptimizerLoading] = useState(false);
+  const [optimizerResult, setOptimizerResult] = useState(null);
   const scrollRef = useRef(null);
   const simulatingRef = useRef(false);
   const skipInProgressRef = useRef(false);
@@ -266,6 +269,53 @@ export default function Home() {
     setSimConflicts([]);
   };
 
+  const runOptimizer = async (formData) => {
+    setOptimizerLoading(true);
+    setOptimizerResult(null);
+    try {
+      const res = await fetch(`${API_BASE}/api/ai/optimize`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          building_description: formData.description,
+          num_cranes: formData.cranes,
+          num_workers: formData.workers,
+          num_material_zones: formData.materials,
+          project_duration: projectDuration,
+          grid_size: GRID,
+        }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      const zones = data.zones || [];
+
+      const next = Array(GRID * GRID).fill(null);
+      zones.forEach((z) => {
+        const zone = ZONES.find((def) => def.id === z.type);
+        if (!zone) return;
+        const idx = z.y * GRID + z.x;
+        if (idx >= 0 && idx < GRID * GRID) next[idx] = zone;
+      });
+      setCells(next);
+      setIsPlaying(false);
+      setDay(1);
+      setAnalytics([]);
+      setSimulationState(null);
+      setSimConflicts([]);
+
+      const count = next.filter(Boolean).length;
+      setOptimizerResult({ success: true, count, reasoning: data.reasoning || "" });
+      setMessages((m) => [
+        ...m,
+        { role: "ai", text: `Layout generated. I've placed ${count} zones based on construction best practices. ${data.reasoning || ""}` },
+      ]);
+    } catch {
+      setOptimizerResult({ success: false, error: "Failed to generate layout. Check that the backend is running." });
+    } finally {
+      setOptimizerLoading(false);
+    }
+  };
+
   const progress = ((day - 1) / (projectDuration - 1)) * 100;
   const placedCount = cells.filter(Boolean).length;
   const zoneCounts = ZONES.map((z) => ({
@@ -409,6 +459,19 @@ export default function Home() {
               }}
             >
               ✕ Clear Site
+            </button>
+            <button
+              onClick={() => { setOptimizerOpen(true); setOptimizerResult(null); }}
+              style={{
+                ...S.toolBtn,
+                borderColor: "#8b5cf6",
+                background: "#8b5cf615",
+                color: "#a78bfa",
+                boxShadow: "0 0 12px #8b5cf615",
+              }}
+            >
+              <span style={{ fontSize: 15 }}>{"✨"}</span>
+              AI Optimize
             </button>
             <div style={{ flex: 1 }} />
             <div style={S.zoneCounter}>
@@ -898,6 +961,15 @@ export default function Home() {
           </div>
         </div>
       </div>
+
+      {optimizerOpen && (
+        <OptimizerModal
+          loading={optimizerLoading}
+          result={optimizerResult}
+          onGenerate={runOptimizer}
+          onClose={() => setOptimizerOpen(false)}
+        />
+      )}
     </div>
   );
 }
@@ -924,6 +996,167 @@ function NavTab({ label, active, onClick }) {
     >
       {label}
     </button>
+  );
+}
+
+/* ───────────────────── optimizer modal ───────────────────── */
+
+function OptimizerModal({ loading, result, onGenerate, onClose }) {
+  const [desc, setDesc] = useState("10-story data center");
+  const [cranes, setCranes] = useState(2);
+  const [workers, setWorkers] = useState(40);
+  const [materials, setMaterials] = useState(3);
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    onGenerate({ description: desc, cranes, workers, materials });
+  };
+
+  const inputStyle = {
+    width: "100%",
+    height: 40,
+    padding: "0 12px",
+    borderRadius: 7,
+    background: "#0c1221",
+    border: "1px solid #1e293b",
+    color: "#e2e8f0",
+    fontSize: 13,
+    outline: "none",
+    fontFamily: "inherit",
+  };
+
+  const labelStyle = {
+    fontSize: 11,
+    fontWeight: 600,
+    color: "#94a3b8",
+    marginBottom: 4,
+    display: "block",
+  };
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: "fixed", inset: 0, zIndex: 1000,
+        background: "rgba(0,0,0,0.7)", backdropFilter: "blur(4px)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          width: 460, background: "#0f1520", borderRadius: 14,
+          border: "1px solid #1e293b", boxShadow: "0 24px 80px rgba(0,0,0,0.6)",
+          overflow: "hidden",
+        }}
+      >
+        {/* Header */}
+        <div style={{
+          padding: "20px 24px 16px", borderBottom: "1px solid #1e293b",
+          display: "flex", alignItems: "flex-start", justifyContent: "space-between",
+        }}>
+          <div>
+            <div style={{ fontSize: 16, fontWeight: 700, color: "#f1f5f9", display: "flex", alignItems: "center", gap: 8 }}>
+              <span>{"✨"}</span> AI Layout Optimizer
+            </div>
+            <div style={{ fontSize: 12, color: "#64748b", marginTop: 4, lineHeight: 1.4 }}>
+              Describe your project and available resources. Mike will generate the optimal site layout.
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            style={{
+              background: "none", border: "none", color: "#64748b",
+              fontSize: 18, cursor: "pointer", padding: "2px 6px",
+              borderRadius: 6, lineHeight: 1,
+            }}
+          >
+            {"\u2715"}
+          </button>
+        </div>
+
+        {/* Form */}
+        <form onSubmit={handleSubmit} style={{ padding: "20px 24px", display: "flex", flexDirection: "column", gap: 14 }}>
+          <div>
+            <label style={labelStyle}>What are you building?</label>
+            <input
+              value={desc}
+              onChange={(e) => setDesc(e.target.value)}
+              placeholder="e.g. 10-story data center, warehouse, office building"
+              style={inputStyle}
+              required
+            />
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
+            <div>
+              <label style={labelStyle}>Number of cranes</label>
+              <input
+                type="number" min={1} max={6} value={cranes}
+                onChange={(e) => setCranes(Number(e.target.value))}
+                style={inputStyle}
+              />
+            </div>
+            <div>
+              <label style={labelStyle}>Total workers</label>
+              <input
+                type="number" min={1} max={200} value={workers}
+                onChange={(e) => setWorkers(Number(e.target.value))}
+                style={inputStyle}
+              />
+            </div>
+            <div>
+              <label style={labelStyle}>Material storage zones</label>
+              <input
+                type="number" min={1} max={8} value={materials}
+                onChange={(e) => setMaterials(Number(e.target.value))}
+                style={inputStyle}
+              />
+            </div>
+          </div>
+
+          {/* Result message */}
+          {result && (
+            <div style={{
+              padding: "10px 14px", borderRadius: 8,
+              background: result.success ? "#16653420" : "#7f1d1d20",
+              border: `1px solid ${result.success ? "#22c55e30" : "#ef444430"}`,
+              fontSize: 12, lineHeight: 1.5,
+              color: result.success ? "#4ade80" : "#fca5a5",
+            }}>
+              {result.success
+                ? `Layout generated. Mike has placed ${result.count} zones based on construction best practices.`
+                : result.error}
+            </div>
+          )}
+
+          <button
+            type="submit"
+            disabled={loading || !desc.trim()}
+            style={{
+              height: 44, borderRadius: 8, border: "none",
+              background: loading ? "#1e293b" : "linear-gradient(135deg, #8b5cf6, #6d28d9)",
+              color: "#fff", fontSize: 14, fontWeight: 600,
+              cursor: loading ? "not-allowed" : "pointer",
+              fontFamily: "inherit",
+              display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+              opacity: loading || !desc.trim() ? 0.6 : 1,
+              transition: "all 0.15s",
+              boxShadow: loading ? "none" : "0 0 20px #8b5cf625",
+            }}
+          >
+            {loading ? (
+              <>
+                <span style={{ display: "inline-block", width: 14, height: 14, border: "2px solid #ffffff40", borderTopColor: "#fff", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />
+                Mike is analyzing your project...
+              </>
+            ) : (
+              "Generate Optimal Layout"
+            )}
+          </button>
+        </form>
+      </div>
+    </div>
   );
 }
 

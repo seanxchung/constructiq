@@ -175,3 +175,109 @@ Answer using the actual data above. Be specific — cite zone names, material qu
     )
 
     return response.content[0].text
+
+
+def _build_layout_prompt(
+    building_description: str,
+    num_cranes: int,
+    num_workers: int,
+    num_material_zones: int,
+    project_duration: int,
+    grid_size: int,
+) -> str:
+    """Build the prompt that asks Claude for an optimal site layout as JSON."""
+    col_labels = [chr(ord("A") + i) for i in range(grid_size)]
+    col_list = ", ".join(col_labels)
+
+    return f"""You are Mike Callahan, senior site superintendent. A project manager needs you to generate an optimal construction site layout.
+
+PROJECT PARAMETERS:
+- Building: {building_description}
+- Cranes: {num_cranes}
+- Workers (crew zones): {num_workers}
+- Material staging zones: {num_material_zones}
+- Project duration: {project_duration} days
+- Grid: {grid_size}x{grid_size} (columns {col_list}, rows 1–{grid_size})
+
+CONSTRUCTION SITE PLANNING PRINCIPLES:
+1. Buildings define the work target — place them centrally so all support zones can reach them.
+2. Cranes must be placed for maximum coverage of the building footprint. Position them adjacent to the building on different sides so their swing radii collectively cover the full structure.
+3. Worker staging zones should be near the building but outside crane swing radii to avoid struck-by hazards.
+4. Material staging zones should be near access roads for easy truck delivery and near cranes for efficient hoisting.
+5. Access roads should run along the site boundary to create a continuous logistics loop without crossing active work areas.
+
+RESPOND WITH ONLY A JSON ARRAY of zone objects. No explanation, no markdown fences, no extra text — just the raw JSON array.
+
+Each zone object must have exactly these fields:
+- "type": one of "crane", "workers", "materials", "road", "building"
+- "x": integer 0–{grid_size - 1} (column index)
+- "y": integer 0–{grid_size - 1} (row index)
+- "reason": brief explanation (one sentence) of why this zone is placed here
+
+Generate the full layout now."""
+
+
+def generate_optimal_layout(
+    building_description: str,
+    num_cranes: int,
+    num_workers: int,
+    num_material_zones: int,
+    project_duration: int,
+    grid_size: int = 12,
+) -> dict[str, Any]:
+    """Ask Claude to produce an optimal construction site layout on a grid.
+
+    Returns a dict with:
+      - zones: list of zone dicts (type, x, y, reason)
+      - summary: string describing the layout rationale
+    """
+    prompt = _build_layout_prompt(
+        building_description,
+        num_cranes,
+        num_workers,
+        num_material_zones,
+        project_duration,
+        grid_size,
+    )
+
+    def _request_layout(prompt_text: str) -> list[dict[str, Any]]:
+        response = client.messages.create(
+            model=MODEL,
+            max_tokens=4096,
+            messages=[{"role": "user", "content": prompt_text}],
+        )
+        raw = response.content[0].text.strip()
+        return json.loads(raw)
+
+    try:
+        zones = _request_layout(prompt)
+    except (json.JSONDecodeError, ValueError):
+        strict_prompt = (
+            prompt
+            + "\n\nCRITICAL: Your previous response was not valid JSON. "
+            "Return ONLY the raw JSON array — no markdown code fences, "
+            "no commentary, no trailing commas. Start with '[' and end with ']'."
+        )
+        zones = _request_layout(strict_prompt)
+
+    type_counts: dict[str, int] = {}
+    for z in zones:
+        type_counts[z["type"]] = type_counts.get(z["type"], 0) + 1
+
+    summary_parts = [
+        f"Layout generated for: {building_description}.",
+        f"Grid: {grid_size}x{grid_size} with {len(zones)} total zones placed.",
+    ]
+    for zone_type, count in sorted(type_counts.items()):
+        summary_parts.append(f"  {zone_type}: {count}")
+    summary_parts.append(
+        f"Project duration: {project_duration} days. "
+        "Cranes positioned for maximum building coverage; "
+        "workers staged outside swing radii; "
+        "materials placed near roads for delivery access."
+    )
+
+    return {
+        "zones": zones,
+        "summary": "\n".join(summary_parts),
+    }
