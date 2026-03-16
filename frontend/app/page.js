@@ -18,6 +18,7 @@ const ZONES = [
   { id: "manlift", label: "Man Lift", emoji: "🔧", color: "#06b6d4", bg: "#06b6d415" },
   { id: "delivery", label: "Delivery Zone", emoji: "🚛", color: "#84cc16", bg: "#84cc1615" },
   { id: "boundary", label: "Site Boundary", emoji: "🚫", color: "#ef4444", bg: "#ef444415" },
+  { id: "truck_staging", label: "Truck Staging", emoji: "🚛", color: "#84cc16", bg: "#84cc1615" },
 ];
 
 const ZONE_SIZES = {
@@ -32,6 +33,7 @@ const ZONE_SIZES = {
   manlift: { w: 1, h: 1 },
   delivery: { w: 3, h: 2 },
   boundary: { w: 1, h: 1 },
+  truck_staging: { w: 3, h: 2 },
 };
 
 const GRID = 30;
@@ -78,6 +80,58 @@ const getBuildingStage = (pct) =>
 const cellXY = (i) => [i % GRID, Math.floor(i / GRID)];
 const zoneIdAt = (i) => `zone-${i % GRID}-${Math.floor(i / GRID)}`;
 const simZoneId = (type, x, y) => `${type}-${x}-${y}`;
+
+const _parseDayList = (s) => {
+  if (!s) return [];
+  return s.split(",").map((d) => parseInt(d.trim(), 10)).filter((d) => !isNaN(d));
+};
+
+const _findRoadPath = (cells, fromIdx, toIdx) => {
+  const roadSet = new Set();
+  cells.forEach((c, i) => { if (c && c.id === "road") roadSet.add(i); });
+
+  const [tx, ty] = [toIdx % GRID, Math.floor(toIdx / GRID)];
+  let goalIdx = -1;
+  let bestDist = Infinity;
+  for (const ri of roadSet) {
+    const [rx, ry] = [ri % GRID, Math.floor(ri / GRID)];
+    const d = Math.abs(rx - tx) + Math.abs(ry - ty);
+    if (d < bestDist) { bestDist = d; goalIdx = ri; }
+  }
+  if (goalIdx < 0 || !roadSet.has(fromIdx)) return [fromIdx];
+  if (goalIdx === fromIdx) return [fromIdx];
+
+  const queue = [fromIdx];
+  const visited = new Set([fromIdx]);
+  const parent = new Map();
+
+  while (queue.length > 0) {
+    const curr = queue.shift();
+    if (curr === goalIdx) break;
+    const cx = curr % GRID, cy = Math.floor(curr / GRID);
+    const nb = [];
+    if (cx > 0) nb.push(cy * GRID + cx - 1);
+    if (cx < GRID - 1) nb.push(cy * GRID + cx + 1);
+    if (cy > 0) nb.push((cy - 1) * GRID + cx);
+    if (cy < GRID - 1) nb.push((cy + 1) * GRID + cx);
+    for (const n of nb) {
+      if (!visited.has(n) && roadSet.has(n)) {
+        visited.add(n);
+        parent.set(n, curr);
+        queue.push(n);
+      }
+    }
+  }
+
+  if (!parent.has(goalIdx)) return [fromIdx];
+  const path = [];
+  let curr = goalIdx;
+  while (curr !== undefined) {
+    path.unshift(curr);
+    curr = parent.get(curr);
+  }
+  return path;
+};
 
 const ENTRY_ARROWS = { right: "\u25b8", left: "\u25c2", down: "\u25be", up: "\u25b4" };
 
@@ -126,6 +180,7 @@ export default function Home() {
   const [optimizerWorkers, setOptimizerWorkers] = useState(0);
   const [projectConfig, setProjectConfig] = useState(null);
   const [configErrorCount, setConfigErrorCount] = useState(0);
+  const [activeTrucks, setActiveTrucks] = useState([]);
   const scrollRef = useRef(null);
   const simulatingRef = useRef(false);
   const skipInProgressRef = useRef(false);
@@ -208,6 +263,51 @@ export default function Home() {
       .finally(() => { simulatingRef.current = false; });
   }, [day, isPlaying, projectDuration]);
 
+  // Spawn delivery trucks when day matches a scheduled delivery day
+  useEffect(() => {
+    if (!projectConfig?.deliveries || !isPlaying) return;
+    const newTrucks = [];
+    projectConfig.deliveries.forEach((del) => {
+      const scheduledDays = _parseDayList(del.days);
+      if (!scheduledDays.includes(day)) return;
+      const entryIdx = Number(del.entryPoint);
+      const destIdx = Number(del.destination);
+      if (isNaN(entryIdx) || isNaN(destIdx)) return;
+      if (!cells[entryIdx] || cells[entryIdx].id !== "road") return;
+
+      const path = _findRoadPath(cells, entryIdx, destIdx);
+      const count = del.truckCount || 1;
+      for (let t = 0; t < count; t++) {
+        newTrucks.push({
+          id: `truck-${day}-${del.id}-${t}`,
+          entryIndex: entryIdx,
+          destIndex: destIdx,
+          path,
+          progress: -t * 0.15,
+          day,
+          color: "#84cc16",
+        });
+      }
+    });
+    if (newTrucks.length > 0) {
+      setActiveTrucks((prev) => [...prev.filter((t) => t.day !== day), ...newTrucks]);
+    }
+  }, [day, projectConfig, isPlaying, cells]);
+
+  // Animate truck progress — increment by 0.1 every 200ms, remove when done
+  const hasTrucks = activeTrucks.length > 0;
+  useEffect(() => {
+    if (!hasTrucks) return;
+    const id = setInterval(() => {
+      setActiveTrucks((prev) =>
+        prev
+          .map((t) => ({ ...t, progress: t.progress + 0.1 }))
+          .filter((t) => t.progress < 1)
+      );
+    }, 200);
+    return () => clearInterval(id);
+  }, [hasTrucks]);
+
   const signOut = async () => {
     await supabase.auth.signOut();
     setUser(null);
@@ -244,6 +344,7 @@ export default function Home() {
     setMessages([...INITIAL_MESSAGES]);
     setSimulationState(null);
     setSimConflicts([]);
+    setActiveTrucks([]);
   };
 
   const buildZones = () =>
@@ -337,6 +438,7 @@ export default function Home() {
     setAnalytics([]);
     setSimulationState(null);
     setSimConflicts([]);
+    setActiveTrucks([]);
   };
 
   const skipDays = (n) => {
@@ -383,6 +485,7 @@ export default function Home() {
     setSimulationState(null);
     setSimConflicts([]);
     setOptimizerWorkers(0);
+    setActiveTrucks([]);
   };
 
   const handleResizeMove = (e) => {
@@ -476,6 +579,7 @@ export default function Home() {
       setSimulationState(null);
       setSimConflicts([]);
       setOptimizerWorkers(formData.workers);
+      setActiveTrucks([]);
 
       const typeCounts = {};
       next.forEach((c) => { if (c?.isOrigin) typeCounts[c.id] = (typeCounts[c.id] || 0) + 1; });
@@ -561,6 +665,7 @@ export default function Home() {
       setSimConflicts([]);
       setProjectsModalOpen(false);
       setOptimizerWorkers(0);
+      setActiveTrucks([]);
       setMessages((m) => [
         ...m,
         { role: "ai", text: `Loaded project "${data.name}". ${(data.zones || []).length} zones restored. Ready to simulate.` },
@@ -625,6 +730,14 @@ export default function Home() {
   const hasActiveDelivery = Object.values(
     simulationState?.materials_consumed || {},
   ).some((v) => v > 0);
+
+  const stagedTruckCount = useMemo(() => {
+    if (!simulationState || !projectConfig?.deliveries) return 0;
+    return projectConfig.deliveries.reduce((sum, del) => {
+      const days = _parseDayList(del.days);
+      return sum + (days.includes(day) ? (del.truckCount || 1) : 0);
+    }, 0);
+  }, [simulationState, projectConfig, day]);
 
   const roadIndices = [];
   const matCellIndices = [];
@@ -1010,6 +1123,25 @@ export default function Home() {
                         </>
                       );
 
+                    } else if (cell?.id === "truck_staging") {
+                      const trucksHere = stagedTruckCount;
+                      const active = trucksHere > 0;
+                      const borderClr = active ? "#84cc16" : "#64748b";
+                      cellBorderR = `1.5px ${active ? "solid" : "dashed"} ${borderClr}`;
+                      cellBorderB = cellBorderR;
+                      if (active) cellAnim = "pulse-amber 2.5s infinite";
+                      content = (
+                        <>
+                          <span style={{ fontSize: 15, lineHeight: 1 }}>{cell.emoji}</span>
+                          <span style={{
+                            fontSize: 8, fontWeight: 800, lineHeight: 1, marginTop: 1,
+                            color: active ? "#84cc16" : "#64748b",
+                          }}>
+                            {trucksHere}
+                          </span>
+                        </>
+                      );
+
                     } else if (cell?.id === "boundary") {
                       cellBg = "repeating-linear-gradient(45deg, #ef444420 0px, #ef444420 3px, transparent 3px, transparent 9px)";
                       cellBorderR = "2px solid #ef4444";
@@ -1118,6 +1250,49 @@ export default function Home() {
                     ))}
                   </svg>
                 )}
+                {activeTrucks.map((truck) => {
+                  const p = Math.max(0, Math.min(truck.progress, 0.99));
+                  const path = truck.path;
+                  if (!path || path.length === 0) return null;
+
+                  const blockedIdx = path.findIndex((ci) => blockedRoadCells.has(ci));
+                  const pathPos = Math.min(Math.floor(p * path.length), path.length - 1);
+                  const isBlocked = blockedIdx >= 0 && pathPos >= blockedIdx;
+                  const effectivePos = isBlocked ? blockedIdx : pathPos;
+                  const ci = path[effectivePos];
+                  const tx = (ci % GRID) * 28;
+                  const ty = Math.floor(ci / GRID) * 28;
+
+                  return (
+                    <div
+                      key={truck.id}
+                      style={{
+                        position: "absolute",
+                        left: tx,
+                        top: ty,
+                        width: 28,
+                        height: 28,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        zIndex: 20,
+                        pointerEvents: "none",
+                        transition: "left 0.2s, top 0.2s",
+                      }}
+                    >
+                      <div style={{
+                        background: isBlocked ? "#ef444420" : "#84cc1620",
+                        border: `1px solid ${isBlocked ? "#ef4444" : "#84cc16"}`,
+                        borderRadius: 4,
+                        padding: 2,
+                        fontSize: 14,
+                        lineHeight: 1,
+                      }}>
+                        🚛
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
 
