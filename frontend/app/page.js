@@ -12,9 +12,29 @@ const ZONES = [
   { id: "materials", label: "Materials", emoji: "📦", color: "#f97316", bg: "#f9731615" },
   { id: "road", label: "Access Road", emoji: "🛣️", color: "#64748b", bg: "#64748b15" },
   { id: "building", label: "Building", emoji: "🏢", color: "#22c55e", bg: "#22c55e15" },
+  { id: "office", label: "Site Office", emoji: "🏠", color: "#8b5cf6", bg: "#8b5cf615" },
+  { id: "parking", label: "Parking", emoji: "🚗", color: "#64748b", bg: "#64748b15" },
+  { id: "fence", label: "Fence/Boundary", emoji: "🚧", color: "#f59e0b", bg: "#f59e0b15" },
+  { id: "manlift", label: "Man Lift", emoji: "🔧", color: "#06b6d4", bg: "#06b6d415" },
+  { id: "delivery", label: "Delivery Zone", emoji: "🚛", color: "#84cc16", bg: "#84cc1615" },
+  { id: "boundary", label: "Site Boundary", emoji: "🏗", color: "#ef4444", bg: "#ef444415" },
 ];
 
-const GRID = 12;
+const ZONE_SIZES = {
+  crane: { w: 2, h: 2 },
+  workers: { w: 2, h: 2 },
+  materials: { w: 3, h: 2 },
+  road: { w: 1, h: 1 },
+  building: { w: 6, h: 6 },
+  office: { w: 4, h: 2 },
+  parking: { w: 4, h: 3 },
+  fence: { w: 1, h: 1 },
+  manlift: { w: 1, h: 1 },
+  delivery: { w: 3, h: 2 },
+  boundary: { w: 1, h: 1 },
+};
+
+const GRID = 30;
 const DEFAULT_DURATION = 90;
 
 const DURATION_OPTIONS = [30, 60, 90, 180, 365];
@@ -108,6 +128,8 @@ export default function Home() {
   const simulatingRef = useRef(false);
   const skipInProgressRef = useRef(false);
   const alertTimerRef = useRef(null);
+  const dragRef = useRef(null);
+  const gridRef = useRef(null);
 
   const triggerAlert = () => {
     setHasNewAlert(true);
@@ -224,7 +246,17 @@ export default function Home() {
 
   const buildZones = () =>
     cells.reduce((acc, cell, i) => {
-      if (cell) acc.push({ type: cell.id, x: i % GRID, y: Math.floor(i / GRID), capacity: 25, metadata: {} });
+      if (cell && cell.isOrigin) {
+        acc.push({
+          type: cell.id,
+          x: i % GRID,
+          y: Math.floor(i / GRID),
+          width: cell.width,
+          height: cell.height,
+          capacity: cell.width * cell.height * 25,
+          metadata: {},
+        });
+      }
       return acc;
     }, []);
 
@@ -233,7 +265,39 @@ export default function Home() {
     setCells((prev) => {
       const next = [...prev];
       const zone = ZONES.find((z) => z.id === activeTool);
-      next[i] = prev[i]?.id === activeTool ? null : zone;
+      const { w, h } = ZONE_SIZES[activeTool];
+      const cx = i % GRID;
+      const cy = Math.floor(i / GRID);
+
+      const existing = prev[i];
+
+      if (existing && existing.isOrigin && existing.id === "boundary" && activeTool !== "boundary") {
+        return prev;
+      }
+
+      if (existing && existing.isOrigin && existing.id === activeTool) {
+        next[i] = null;
+        for (let idx = 0; idx < next.length; idx++) {
+          if (next[idx] && next[idx].ref === i) next[idx] = null;
+        }
+        return next;
+      }
+
+      if (cx + w > GRID || cy + h > GRID) return prev;
+      for (let dy = 0; dy < h; dy++) {
+        for (let dx = 0; dx < w; dx++) {
+          const ti = (cy + dy) * GRID + (cx + dx);
+          if (prev[ti] !== null) return prev;
+        }
+      }
+
+      next[i] = { ...zone, width: w, height: h, isOrigin: true };
+      for (let dy = 0; dy < h; dy++) {
+        for (let dx = 0; dx < w; dx++) {
+          const ti = (cy + dy) * GRID + (cx + dx);
+          if (ti !== i) next[ti] = { ref: i, id: zone.id };
+        }
+      }
       return next;
     });
   };
@@ -319,6 +383,49 @@ export default function Home() {
     setOptimizerWorkers(0);
   };
 
+  const handleResizeMove = (e) => {
+    if (!dragRef.current) return;
+    const { originIndex, startX, startY, origW, origH } = dragRef.current;
+    const deltaX = Math.round((e.clientX - startX) / 28);
+    const deltaY = Math.round((e.clientY - startY) / 28);
+    let newW = Math.max(1, origW + deltaX);
+    let newH = Math.max(1, origH + deltaY);
+    const ox = originIndex % GRID;
+    const oy = Math.floor(originIndex / GRID);
+    newW = Math.min(newW, GRID - ox);
+    newH = Math.min(newH, GRID - oy);
+    if (newW === origW && newH === origH && !dragRef.current._dirty) return;
+
+    setCells((prev) => {
+      const origin = prev[originIndex];
+      if (!origin || !origin.isOrigin) return prev;
+      const next = [...prev];
+      for (let idx = 0; idx < next.length; idx++) {
+        if (next[idx] && next[idx].ref === originIndex) next[idx] = null;
+      }
+      for (let dy = 0; dy < newH; dy++) {
+        for (let dx = 0; dx < newW; dx++) {
+          const ti = (oy + dy) * GRID + (ox + dx);
+          if (ti === originIndex) continue;
+          if (next[ti] !== null && !(next[ti].ref === originIndex)) return prev;
+        }
+      }
+      next[originIndex] = { ...origin, width: newW, height: newH };
+      for (let dy = 0; dy < newH; dy++) {
+        for (let dx = 0; dx < newW; dx++) {
+          const ti = (oy + dy) * GRID + (ox + dx);
+          if (ti !== originIndex) next[ti] = { ref: originIndex, id: origin.id };
+        }
+      }
+      return next;
+    });
+    dragRef.current._dirty = true;
+  };
+
+  const handleResizeUp = () => {
+    dragRef.current = null;
+  };
+
   const runOptimizer = async (formData) => {
     setOptimizerLoading(true);
     setOptimizerResult(null);
@@ -343,8 +450,21 @@ export default function Home() {
       zones.forEach((z) => {
         const zone = ZONES.find((def) => def.id === z.type);
         if (!zone) return;
-        const idx = z.y * GRID + z.x;
-        if (idx >= 0 && idx < GRID * GRID) next[idx] = zone;
+        const { w, h } = ZONE_SIZES[z.type];
+        const ox = z.x, oy = z.y;
+        const idx = oy * GRID + ox;
+        if (idx < 0 || ox + w > GRID || oy + h > GRID) return;
+        let blocked = false;
+        for (let dy = 0; dy < h && !blocked; dy++)
+          for (let dx = 0; dx < w && !blocked; dx++)
+            if (next[(oy + dy) * GRID + (ox + dx)] !== null) blocked = true;
+        if (blocked) return;
+        next[idx] = { ...zone, width: w, height: h, isOrigin: true };
+        for (let dy = 0; dy < h; dy++)
+          for (let dx = 0; dx < w; dx++) {
+            const ti = (oy + dy) * GRID + (ox + dx);
+            if (ti !== idx) next[ti] = { ref: idx, id: zone.id };
+          }
       });
       setCells(next);
       setIsPlaying(false);
@@ -356,7 +476,7 @@ export default function Home() {
       setOptimizerWorkers(formData.workers);
 
       const typeCounts = {};
-      next.forEach((c) => { if (c) typeCounts[c.id] = (typeCounts[c.id] || 0) + 1; });
+      next.forEach((c) => { if (c?.isOrigin) typeCounts[c.id] = (typeCounts[c.id] || 0) + 1; });
       const parts = [];
       if (typeCounts.crane) parts.push(`${typeCounts.crane} crane${typeCounts.crane !== 1 ? "s" : ""}`);
       if (typeCounts.workers) parts.push(`${typeCounts.workers} worker zone${typeCounts.workers !== 1 ? "s" : ""} (${formData.workers} workers)`);
@@ -413,8 +533,21 @@ export default function Home() {
       (data.zones || []).forEach((z) => {
         const zone = ZONES.find((def) => def.id === z.type);
         if (!zone) return;
-        const idx = z.y * GRID + z.x;
-        if (idx >= 0 && idx < GRID * GRID) next[idx] = zone;
+        const { w, h } = ZONE_SIZES[z.type];
+        const ox = z.x, oy = z.y;
+        const idx = oy * GRID + ox;
+        if (idx < 0 || ox + w > GRID || oy + h > GRID) return;
+        let blocked = false;
+        for (let dy = 0; dy < h && !blocked; dy++)
+          for (let dx = 0; dx < w && !blocked; dx++)
+            if (next[(oy + dy) * GRID + (ox + dx)] !== null) blocked = true;
+        if (blocked) return;
+        next[idx] = { ...zone, width: w, height: h, isOrigin: true };
+        for (let dy = 0; dy < h; dy++)
+          for (let dx = 0; dx < w; dx++) {
+            const ti = (oy + dy) * GRID + (ox + dx);
+            if (ti !== idx) next[ti] = { ref: idx, id: zone.id };
+          }
       });
       setCells(next);
       if (data.project_duration) setProjectDuration(data.project_duration);
@@ -441,10 +574,10 @@ export default function Home() {
   };
 
   const progress = ((day - 1) / (projectDuration - 1)) * 100;
-  const placedCount = cells.filter(Boolean).length;
+  const placedCount = cells.filter((c) => c && c.isOrigin).length;
   const zoneCounts = ZONES.map((z) => ({
     ...z,
-    count: cells.filter((c) => c?.id === z.id).length,
+    count: cells.filter((c) => c?.isOrigin && c.id === z.id).length,
   }));
   const currentPhase = [...ganttPhases].reverse().find((gp) => day >= gp.start)?.label ?? "Pre-Construction";
 
@@ -453,7 +586,7 @@ export default function Home() {
 
   const roadAdjMap = {};
   cells.forEach((c, i) => {
-    if (c?.id !== "road") return;
+    if (!c || c.id !== "road" || !c.isOrigin) return;
     const [x, y] = cellXY(i);
     roadAdjMap[i] = {
       up: y > 0 && cells[(y - 1) * GRID + x]?.id === "road",
@@ -467,7 +600,7 @@ export default function Home() {
   const activeCranes = simCranes.filter((c) => c.active);
   const blockedRoadCells = new Set();
   cells.forEach((c, i) => {
-    if (c?.id !== "road") return;
+    if (!c || c.id !== "road" || !c.isOrigin) return;
     const [x, y] = cellXY(i);
     for (const crane of activeCranes) {
       if ((crane.swing_radius || 0) + 0.5 - Math.sqrt((crane.x - x) ** 2 + (crane.y - y) ** 2) > 0) {
@@ -494,8 +627,9 @@ export default function Home() {
   const roadIndices = [];
   const matCellIndices = [];
   cells.forEach((c, i) => {
-    if (c?.id === "road") roadIndices.push(i);
-    else if (c?.id === "materials") matCellIndices.push(i);
+    if (!c || !c.isOrigin) return;
+    if (c.id === "road") roadIndices.push(i);
+    else if (c.id === "materials") matCellIndices.push(i);
   });
   const deliveryRoutes = matCellIndices
     .map((mi) => {
@@ -508,12 +642,14 @@ export default function Home() {
       }
       if (best < 0) return null;
       const [rx, ry] = cellXY(best);
-      return { x1: rx * 46 + 23, y1: ry * 46 + 23, x2: mx * 46 + 23, y2: my * 46 + 23 };
+      return { x1: rx * 28 + 14, y1: ry * 28 + 14, x2: mx * 28 + 14, y2: my * 28 + 14 };
     })
     .filter(Boolean);
 
   /* ────────── row / col labels ────────── */
-  const colLabels = Array.from({ length: GRID }, (_, i) => String.fromCharCode(65 + i));
+  const colLabels = Array.from({ length: GRID }, (_, i) =>
+    i < 26 ? String.fromCharCode(65 + i) : "A" + String.fromCharCode(65 + i - 26)
+  );
   const rowLabels = Array.from({ length: GRID }, (_, i) => String(i + 1));
 
   /* ───────────────────── render ───────────────────── */
@@ -554,8 +690,8 @@ export default function Home() {
           {activeTab === "site" ? (
           <>
           {/* Zone Toolbar */}
-          <div style={S.toolbar}>
-            <span style={S.sectionLabel}>ZONES</span>
+          <div style={{ ...S.toolbar, flexWrap: "wrap", rowGap: 6 }}>
+            <span style={{ ...S.sectionLabel, width: "100%", marginBottom: -2 }}>ZONES</span>
             {ZONES.map((z) => {
               const active = activeTool === z.id;
               return (
@@ -656,23 +792,84 @@ export default function Home() {
               {/* The Grid */}
               <div style={{ position: "relative" }}>
                 <div
+                  ref={gridRef}
+                  onMouseMove={handleResizeMove}
+                  onMouseUp={handleResizeUp}
+                  onMouseLeave={handleResizeUp}
                   style={{
                     display: "grid",
                     gridTemplateColumns: `repeat(${GRID}, 1fr)`,
-                    width: GRID * 46,
+                    width: GRID * 28,
                     border: "1px solid #1e293b",
                     borderRadius: 8,
                     overflow: "hidden",
                   }}
                 >
-                  {cells.map((cell, i) => {
+                  {(() => {
+                    const hoverFootprint = new Map();
+                    if (activeTool && hoveredCell >= 0 && !cells[hoveredCell]) {
+                      const hz = ZONES.find((z) => z.id === activeTool);
+                      const { w, h } = ZONE_SIZES[activeTool];
+                      const hx = hoveredCell % GRID;
+                      const hy = Math.floor(hoveredCell / GRID);
+                      const oob = hx + w > GRID || hy + h > GRID;
+                      let blocked = oob;
+                      if (!oob) {
+                        for (let dy = 0; dy < h && !blocked; dy++)
+                          for (let dx = 0; dx < w && !blocked; dx++) {
+                            const ti = (hy + dy) * GRID + (hx + dx);
+                            if (cells[ti] !== null) blocked = true;
+                          }
+                      }
+                      for (let dy = 0; dy < h; dy++)
+                        for (let dx = 0; dx < w; dx++) {
+                          const ti = (hy + dy) * GRID + (hx + dx);
+                          if (ti >= 0 && ti < GRID * GRID && (hx + dx) < GRID)
+                            hoverFootprint.set(ti, { color: hz.color, valid: !blocked });
+                        }
+                    }
+                    return cells.map((cell, i) => {
+                    const [cx, cy] = cellXY(i);
+                    const hfp = hoverFootprint.get(i);
+
+                    if (cell && cell.ref !== undefined) {
+                      const originZone = ZONES.find((z) => z.id === cell.id);
+                      return (
+                        <div
+                          key={i}
+                          onClick={() => placeZone(cell.ref)}
+                          onMouseEnter={() => setHoveredCell(i)}
+                          onMouseLeave={() => setHoveredCell(-1)}
+                          style={{
+                            width: 28,
+                            height: 28,
+                            background: (originZone?.color || "#64748b") + "1a",
+                            borderRight: "1px solid #1e293b30",
+                            borderBottom: "1px solid #1e293b30",
+                            cursor: activeTool ? "crosshair" : "default",
+                            transition: "background 0.15s",
+                            position: "relative",
+                          }}
+                        >
+                          {hfp && (
+                            <div style={{
+                              position: "absolute", inset: 0,
+                              background: hfp.valid ? hfp.color + "26" : "#ef444426",
+                              pointerEvents: "none", zIndex: 3,
+                            }} />
+                          )}
+                        </div>
+                      );
+                    }
+
                     const isHover = hoveredCell === i && activeTool && !cell;
                     const hoverZone = isHover ? ZONES.find((z) => z.id === activeTool) : null;
-                    const [cx, cy] = cellXY(i);
 
-                    let cellBg = cell ? cell.bg : isHover ? `${hoverZone.color}0a` : "#0c1221";
+                    let cellBg = cell ? cell.bg : "#0c1221";
                     let cellBorderR = "1px solid #1e293b30";
                     let cellBorderB = "1px solid #1e293b30";
+                    let cellBorderL = undefined;
+                    let cellBorderT = undefined;
                     let cellAnim = undefined;
                     let content = null;
 
@@ -726,7 +923,7 @@ export default function Home() {
                           </>
                         );
                       } else {
-                        const numWZ = cells.filter((c) => c?.id === "workers").length;
+                        const numWZ = cells.filter((c) => c?.isOrigin && c.id === "workers").length;
                         const cap = numWZ > 0 && optimizerWorkers > 0 ? Math.round(optimizerWorkers / numWZ) : 25;
                         content = (
                           <>
@@ -810,6 +1007,18 @@ export default function Home() {
                         </>
                       );
 
+                    } else if (cell?.id === "boundary") {
+                      cellBg = "repeating-linear-gradient(45deg, #ef444420 0px, #ef444420 3px, transparent 3px, transparent 9px)";
+                      cellBorderR = "2px solid #ef4444";
+                      cellBorderB = "2px solid #ef4444";
+                      cellBorderL = "2px solid #ef4444";
+                      cellBorderT = "2px solid #ef4444";
+                      content = (
+                        <span style={{ fontSize: 7, fontWeight: 800, color: "#ef4444", letterSpacing: "0.04em", lineHeight: 1 }}>
+                          BNDRY
+                        </span>
+                      );
+
                     } else if (cell) {
                       content = (
                         <>
@@ -826,8 +1035,8 @@ export default function Home() {
                         onMouseEnter={() => setHoveredCell(i)}
                         onMouseLeave={() => setHoveredCell(-1)}
                         style={{
-                          width: 46,
-                          height: 46,
+                          width: 28,
+                          height: 28,
                           display: "flex",
                           flexDirection: "column",
                           alignItems: "center",
@@ -835,6 +1044,8 @@ export default function Home() {
                           background: cellBg,
                           borderRight: cellBorderR,
                           borderBottom: cellBorderB,
+                          ...(cellBorderL ? { borderLeft: cellBorderL } : {}),
+                          ...(cellBorderT ? { borderTop: cellBorderT } : {}),
                           cursor: activeTool ? "crosshair" : "default",
                           transition: "background 0.15s, border-color 0.15s",
                           position: "relative",
@@ -842,18 +1053,55 @@ export default function Home() {
                         }}
                       >
                         {content}
-                        {isHover && !cell && (
-                          <span style={{ fontSize: 14, opacity: 0.25 }}>{hoverZone.emoji}</span>
+                        {hfp && (
+                          <div style={{
+                            position: "absolute", inset: 0,
+                            background: hfp.valid ? hfp.color + "26" : "#ef444426",
+                            pointerEvents: "none", zIndex: 3,
+                            display: "flex", alignItems: "center", justifyContent: "center",
+                          }}>
+                            {!cell && i === hoveredCell && hoverZone && (
+                              <span style={{ fontSize: 14, opacity: 0.4 }}>{hoverZone.emoji}</span>
+                            )}
+                          </div>
+                        )}
+                        {cell && cell.isOrigin && (cell.width > 1 || cell.height > 1) && (
+                          <div
+                            onMouseDown={(e) => {
+                              e.stopPropagation();
+                              e.preventDefault();
+                              dragRef.current = {
+                                originIndex: i,
+                                startX: e.clientX,
+                                startY: e.clientY,
+                                origW: cell.width,
+                                origH: cell.height,
+                              };
+                            }}
+                            style={{
+                              position: "absolute",
+                              bottom: 0,
+                              right: 0,
+                              width: 10,
+                              height: 10,
+                              background: cell.color,
+                              opacity: 0.8,
+                              cursor: "se-resize",
+                              zIndex: 10,
+                              borderRadius: "2px 0 2px 0",
+                            }}
+                          />
                         )}
                       </div>
                     );
-                  })}
+                  });
+                  })()}
                 </div>
                 {deliveryRoutes.length > 0 && (
                   <svg
                     style={{
                       position: "absolute", top: 0, left: 0,
-                      width: GRID * 46, height: GRID * 46,
+                      width: GRID * 28, height: GRID * 28,
                       pointerEvents: "none",
                     }}
                   >
@@ -880,6 +1128,11 @@ export default function Home() {
                   </span>
                 </div>
               ))}
+              <div style={{ marginLeft: "auto", paddingRight: 24 }}>
+                <span style={{ fontSize: 11, color: "#334155" }}>
+                  1 tile = 10 ft · Site = 300 × 300 ft
+                </span>
+              </div>
             </div>
           </div>
           </>
@@ -2346,12 +2599,12 @@ const S = {
     flexDirection: "column",
     alignItems: "center",
     justifyContent: "center",
-    padding: 16,
+    padding: 8,
     background: "#080c18",
     gap: 6,
   },
   gridHeader: {
-    width: GRID * 46 + 24,
+    width: GRID * 28 + 24,
     display: "flex",
     justifyContent: "space-between",
     alignItems: "center",
@@ -2360,7 +2613,7 @@ const S = {
   },
   colLabelRow: {
     display: "grid",
-    gridTemplateColumns: `repeat(${GRID}, 46px)`,
+    gridTemplateColumns: `repeat(${GRID}, 28px)`,
     marginBottom: 2,
   },
   colLabel: {
@@ -2376,7 +2629,7 @@ const S = {
     marginRight: 4,
   },
   rowLabel: {
-    height: 46,
+    height: 28,
     display: "flex",
     alignItems: "center",
     justifyContent: "flex-end",
