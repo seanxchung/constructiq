@@ -187,6 +187,7 @@ export default function Home() {
   const alertTimerRef = useRef(null);
   const dragRef = useRef(null);
   const gridRef = useRef(null);
+  const isPaintingRef = useRef(false);
 
   const triggerAlert = () => {
     setHasNewAlert(true);
@@ -571,6 +572,15 @@ export default function Home() {
             if (ti !== idx) next[ti] = { ref: idx, id: zone.id };
           }
       });
+
+      cells.forEach((c, i) => {
+        if (!c?.isOrigin || (c.id !== "boundary" && c.id !== "fence")) return;
+        next[i] = c;
+        for (let idx = 0; idx < cells.length; idx++) {
+          if (cells[idx] && cells[idx].ref === i) next[idx] = cells[idx];
+        }
+      });
+
       setCells(next);
       setIsPlaying(false);
       setConflictPaused(false);
@@ -908,7 +918,7 @@ export default function Home() {
                 <div
                   ref={gridRef}
                   onMouseMove={handleResizeMove}
-                  onMouseUp={handleResizeUp}
+                  onMouseUp={() => { isPaintingRef.current = false; handleResizeUp(); }}
                   onMouseLeave={handleResizeUp}
                   style={{
                     display: "grid",
@@ -1165,7 +1175,16 @@ export default function Home() {
                       <div
                         key={i}
                         onClick={() => placeZone(i)}
-                        onMouseEnter={() => setHoveredCell(i)}
+                        onMouseDown={() => {
+                          if (activeTool === 'road' || activeTool === 'boundary' || activeTool === 'fence') {
+                            isPaintingRef.current = true;
+                            placeZone(i);
+                          }
+                        }}
+                        onMouseEnter={() => {
+                          setHoveredCell(i);
+                          if (isPaintingRef.current) placeZone(i);
+                        }}
                         onMouseLeave={() => setHoveredCell(-1)}
                         style={{
                           width: 28,
