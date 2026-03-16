@@ -372,6 +372,21 @@ def run_simulation_tick(
 
     current_phase = _determine_phase(active_tasks, day, schedule)
 
+    # --- Workforce scaling from project_config phases ---
+    _PHASE_TO_CONFIG_KEY = {
+        "site_prep": "site-prep",
+        "structure": "structural",
+        "commissioning": "closeout",
+    }
+    phase_worker_scale: float | None = None
+    if project_config and project_config.get("workforce"):
+        config_key = _PHASE_TO_CONFIG_KEY.get(current_phase, current_phase)
+        wf = project_config["workforce"].get(config_key, {})
+        phase_total = wf.get("total", 0)
+        if phase_total > 0:
+            default_total = sum(DEFAULT_CREW_POOL.values())
+            phase_worker_scale = phase_total / max(1, default_total)
+
     # --- Crew demand from active tasks ---
     crew_required: dict[str, int] = {}
     for task in active_tasks:
@@ -385,6 +400,8 @@ def run_simulation_tick(
         if weekend:
             needed = max(1, round(needed * WEEKEND_CREW_FACTOR))
         available = crew_pool.get(role, 0)
+        if phase_worker_scale is not None:
+            available = max(1, round(available * phase_worker_scale))
         crew_on_site[role] = min(needed, available)
 
     total_workers = sum(crew_on_site.values())
@@ -399,15 +416,24 @@ def run_simulation_tick(
             )
 
     # --- Material inventory at yard zones ---
+    delivery_schedule: dict[str, list[int]] | None = None
+    if project_config and project_config.get("deliveries"):
+        delivery_schedule = _parse_delivery_schedule(project_config["deliveries"])
+
     days_since_restock = (day - 1) % RESTOCK_CYCLE_DAYS
     next_restock = RESTOCK_CYCLE_DAYS - days_since_restock
     material_inventory = _build_material_inventory(
         zones, day, materials_consumed, days_since_restock, next_restock, rng,
+        delivery_schedule=delivery_schedule,
     )
 
     # --- Crane / equipment status ---
+    crane_config_list: list[dict[str, Any]] | None = None
+    if project_config and project_config.get("cranes"):
+        crane_config_list = project_config["cranes"]
+
     crane_needed = any("crane_operator" in t["required_crew"] for t in active_tasks)
-    cranes = _build_crane_status(zones, crane_needed, rng)
+    cranes = _build_crane_status(zones, crane_needed, rng, day, crane_config_list)
 
     equipment_events: list[dict[str, Any]] = []
     for crane in cranes:
@@ -500,6 +526,25 @@ def _determine_phase(
     return "pre_construction"
 
 
+def _parse_delivery_schedule(
+    deliveries: list[dict[str, Any]],
+) -> dict[str, list[int]]:
+    """Build a map of zone_id → sorted list of scheduled delivery days."""
+    schedule: dict[str, list[int]] = {}
+    for d in deliveries:
+        zone_key = d.get("zone") or d.get("zoneId") or ""
+        raw_days = d.get("scheduledDays", "")
+        if not raw_days or not zone_key:
+            continue
+        days = sorted(
+            int(s.strip()) for s in str(raw_days).split(",") if s.strip().isdigit()
+        )
+        schedule.setdefault(zone_key, []).extend(days)
+    for k in schedule:
+        schedule[k] = sorted(set(schedule[k]))
+    return schedule
+
+
 def _build_material_inventory(
     zones: list[dict],
     day: int,
@@ -507,6 +552,7 @@ def _build_material_inventory(
     days_since_restock: int,
     next_restock: int,
     rng: random.Random,
+    delivery_schedule: dict[str, list[int]] | None = None,
 ) -> dict[str, Any]:
     """Track material inventory across material-yard zones."""
     mat_zones = [z for z in zones if z["type"] == "materials"]
@@ -518,6 +564,25 @@ def _build_material_inventory(
 
     for i, z in enumerate(mat_zones):
         zid = _zone_id(z)
+
+        restock_today = False
+        zone_next_restock = next_restock
+        zone_days_since = days_since_restock
+
+        if delivery_schedule:
+            zone_delivery_days = delivery_schedule.get(zid, [])
+            if zone_delivery_days:
+                restock_today = day in zone_delivery_days
+                future = [d for d in zone_delivery_days if d > day]
+                zone_next_restock = (future[0] - day) if future else 999
+                past = [d for d in zone_delivery_days if d <= day]
+                zone_days_since = (day - past[-1]) if past else day
+            else:
+                zone_days_since = days_since_restock
+                zone_next_restock = next_restock
+        else:
+            restock_today = days_since_restock == 0
+
         assigned = [k for j, k in enumerate(mat_keys)
                      if j % max(1, len(mat_zones)) == i]
         if not assigned:
@@ -526,9 +591,14 @@ def _build_material_inventory(
         for mat_key in assigned:
             cat = MATERIAL_CATALOG[mat_key]
             daily_use = consumption.get(mat_key, 0)
-            cumulative = daily_use * days_since_restock
-            noise = rng.uniform(-daily_use * 0.1, daily_use * 0.1) if daily_use > 0 else 0
-            quantity = max(0.0, cat["max_stock"] - cumulative + noise)
+
+            if restock_today:
+                quantity = float(cat["max_stock"])
+            else:
+                cumulative = daily_use * zone_days_since
+                noise = rng.uniform(-daily_use * 0.1, daily_use * 0.1) if daily_use > 0 else 0
+                quantity = max(0.0, cat["max_stock"] - cumulative + noise)
+
             pct = (quantity / cat["max_stock"] * 100) if cat["max_stock"] else 0
 
             mat_id = f"mat-{zid}-{mat_key}"
@@ -540,7 +610,7 @@ def _build_material_inventory(
                 "max_quantity": cat["max_stock"],
                 "daily_usage": round(daily_use, 1),
                 "pct_remaining": round(pct, 1),
-                "days_until_restock": next_restock,
+                "days_until_restock": zone_next_restock,
                 "zone_id": zid,
             }
 
@@ -551,7 +621,17 @@ def _build_crane_status(
     zones: list[dict],
     crane_needed: bool,
     rng: random.Random,
+    day: int = 1,
+    crane_config_list: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
+    crane_day_lookup: dict[tuple[int, int], dict] = {}
+    if crane_config_list:
+        for cc in crane_config_list:
+            pos = cc.get("position") or {}
+            cx, cy = pos.get("x"), pos.get("y")
+            if cx is not None and cy is not None:
+                crane_day_lookup[(int(cx), int(cy))] = cc
+
     cranes: list[dict[str, Any]] = []
     for z in zones:
         if z["type"] != "crane":
@@ -560,6 +640,17 @@ def _build_crane_status(
         col = chr(65 + int(z["x"]))
         row = int(z["y"]) + 1
         broken = rng.random() < EQUIPMENT_BREAKDOWN_PROB
+
+        config_active = True
+        if crane_day_lookup:
+            cc = crane_day_lookup.get((int(z["x"]), int(z["y"])))
+            if cc:
+                arrival = cc.get("arrivalDay", 1)
+                departure = cc.get("departureDay", 9999)
+                config_active = arrival <= day <= departure
+            else:
+                config_active = True
+
         cranes.append({
             "id": zid,
             "name": f"Crane ({col}{row})",
@@ -567,7 +658,7 @@ def _build_crane_status(
             "y": z["y"],
             "swing_radius": CRANE_SWING_RADIUS,
             "zone_id": zid,
-            "active": not broken,
+            "active": config_active and not broken,
             "needed": crane_needed,
             "breakdown": broken,
         })
@@ -613,6 +704,7 @@ def detect_conflicts(
     day: int,
     project_duration: int = 180,
     critical_path: list[str] | None = None,
+    project_config: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Detect schedule, resource, equipment, and spatial conflicts.
 
@@ -817,12 +909,55 @@ def detect_conflicts(
                 ),
             })
 
+    # ── 4h. Milestone impacts ─────────────────────────────────────────
+    if project_config and project_config.get("milestones"):
+        for ms in project_config["milestones"]:
+            ms_day = ms.get("day")
+            if ms_day is None or int(ms_day) != day:
+                continue
+            impact = ms.get("impact", "")
+            ms_name = ms.get("name", "Milestone")
+
+            if impact == "No Heavy Equipment":
+                conflicts.append({
+                    "type": "milestone_restriction",
+                    "severity": "LOW",
+                    "message": (
+                        f"Day {day}: {ms_name} — no heavy equipment "
+                        f"operations scheduled"
+                    ),
+                    "cost_impact": 0,
+                    "schedule_impact_days": 0,
+                    "suggestion": (
+                        f"Ensure all crane and heavy machinery operations are "
+                        f"suspended for '{ms_name}'."
+                    ),
+                })
+            elif impact == "Delivery Blackout":
+                conflicts.append({
+                    "type": "milestone_delivery_blackout",
+                    "severity": "MEDIUM",
+                    "message": (
+                        f"Day {day}: {ms_name} — delivery blackout in effect. "
+                        f"Any deliveries scheduled today must be rescheduled."
+                    ),
+                    "cost_impact": _usd(3_000),
+                    "schedule_impact_days": 1,
+                    "suggestion": (
+                        f"Reschedule all material deliveries away from day "
+                        f"{day} due to '{ms_name}'. Coordinate with suppliers "
+                        f"for alternate dates."
+                    ),
+                })
+            elif impact == "Critical Path Event":
+                pass
+
     # ── Zone-based spatial conflicts ──────────────────────────────────
     _detect_zone_conflicts(zones, state, day, conflicts)
 
     conflicts.sort(
         key=lambda c: (
-            0 if c["severity"] == "HIGH" else 1,
+            {"HIGH": 0, "MEDIUM": 1, "LOW": 2}.get(c["severity"], 3),
             -c["cost_impact"],
         ),
     )
@@ -992,6 +1127,7 @@ def compare_scenarios(
             state = run_simulation_tick(zones, d, duration, config)
             day_conflicts = detect_conflicts(
                 zones, state, d, duration, cp["critical_path"],
+                project_config=config,
             )
             day_cost = sum(c["cost_impact"] for c in day_conflicts)
             total_cost += day_cost

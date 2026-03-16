@@ -135,6 +135,7 @@ def simulate(req: SimulateRequest):
     cp = calculate_critical_path(BASE_TASKS, req.project_duration)
     conflicts = detect_conflicts(
         zones, state, req.day, req.project_duration, cp["critical_path"],
+        project_config=req.project_config,
     )
 
     ai_analysis = None
