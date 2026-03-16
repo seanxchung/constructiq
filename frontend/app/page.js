@@ -727,17 +727,15 @@ export default function Home() {
   const craneByPos = {};
   simCranes.forEach((c) => { craneByPos[`${c.x}-${c.y}`] = c; });
 
+  const stagedTruckCount = (!simulationState || !projectConfig?.deliveries) ? 0 :
+  projectConfig.deliveries.reduce((sum, del) => {
+    const days = _parseDayList(del.days);
+    return sum + (days.includes(day) ? (del.truckCount || 1) : 0);
+  }, 0);
+
   const hasActiveDelivery = Object.values(
     simulationState?.materials_consumed || {},
   ).some((v) => v > 0);
-
-  const stagedTruckCount = useMemo(() => {
-    if (!simulationState || !projectConfig?.deliveries) return 0;
-    return projectConfig.deliveries.reduce((sum, del) => {
-      const days = _parseDayList(del.days);
-      return sum + (days.includes(day) ? (del.truckCount || 1) : 0);
-    }, 0);
-  }, [simulationState, projectConfig, day]);
 
   const roadIndices = [];
   const matCellIndices = [];
