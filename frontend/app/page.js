@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import ReactMarkdown from "react-markdown";
 import { supabase } from "./auth";
 
@@ -17,7 +17,7 @@ const ZONES = [
   { id: "fence", label: "Fence/Boundary", emoji: "🚧", color: "#f59e0b", bg: "#f59e0b15" },
   { id: "manlift", label: "Man Lift", emoji: "🔧", color: "#06b6d4", bg: "#06b6d415" },
   { id: "delivery", label: "Delivery Zone", emoji: "🚛", color: "#84cc16", bg: "#84cc1615" },
-  { id: "boundary", label: "Site Boundary", emoji: "🏗", color: "#ef4444", bg: "#ef444415" },
+  { id: "boundary", label: "Site Boundary", emoji: "🚫", color: "#ef4444", bg: "#ef444415" },
 ];
 
 const ZONE_SIZES = {
@@ -124,6 +124,8 @@ export default function Home() {
   const [savedProjects, setSavedProjects] = useState([]);
   const [projectNameInput, setProjectNameInput] = useState("");
   const [optimizerWorkers, setOptimizerWorkers] = useState(0);
+  const [projectConfig, setProjectConfig] = useState(null);
+  const [configErrorCount, setConfigErrorCount] = useState(0);
   const scrollRef = useRef(null);
   const simulatingRef = useRef(false);
   const skipInProgressRef = useRef(false);
@@ -177,7 +179,7 @@ export default function Home() {
     fetch(`${API_BASE}/api/simulate`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ day, zones: buildZones(), project_duration: projectDuration }),
+      body: JSON.stringify({ day, zones: buildZones(), project_duration: projectDuration, project_config: projectConfig }),
     })
       .then((res) => res.ok ? res.json() : null)
       .then((data) => {
@@ -344,7 +346,7 @@ export default function Home() {
     fetch(`${API_BASE}/api/simulate`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ day: target, zones: buildZones(), project_duration: projectDuration }),
+      body: JSON.stringify({ day: target, zones: buildZones(), project_duration: projectDuration, project_config: projectConfig }),
     })
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
@@ -667,6 +669,7 @@ export default function Home() {
           <NavTab label="SITE PLAN" active={activeTab === "site"} onClick={() => setActiveTab("site")} />
           <NavTab label="SCHEDULE" active={activeTab === "schedule"} onClick={() => setActiveTab("schedule")} />
           <NavTab label="ANALYTICS" active={activeTab === "analytics"} onClick={() => setActiveTab("analytics")} />
+          <NavTab label="CONFIGURE" active={activeTab === "configure"} onClick={() => setActiveTab("configure")} badge={configErrorCount} />
         </div>
         <div style={S.navRight}>
           <div style={S.liveGroup}>
@@ -1060,7 +1063,7 @@ export default function Home() {
                             pointerEvents: "none", zIndex: 3,
                             display: "flex", alignItems: "center", justifyContent: "center",
                           }}>
-                            {!cell && i === hoveredCell && hoverZone && (
+                            {!cell && i === hoveredCell && hoverZone && hoverZone.id !== "boundary" && (
                               <span style={{ fontSize: 14, opacity: 0.4 }}>{hoverZone.emoji}</span>
                             )}
                           </div>
@@ -1138,6 +1141,8 @@ export default function Home() {
           </>
           ) : activeTab === "schedule" ? (
             <ScheduleView analytics={analytics} day={day} currentPhase={currentPhase} projectDuration={projectDuration} ganttPhases={ganttPhases} />
+          ) : activeTab === "configure" ? (
+            <ConfigurePanel cells={cells} projectDuration={projectDuration} onConfigSave={setProjectConfig} onValidationChange={setConfigErrorCount} />
           ) : (
             <AnalyticsDashboard analytics={analytics} />
           )}
@@ -1512,7 +1517,7 @@ export default function Home() {
 
 /* ───────────────────── sub-components ───────────────────── */
 
-function NavTab({ label, active, onClick }) {
+function NavTab({ label, active, onClick, badge }) {
   return (
     <button
       onClick={onClick}
@@ -1531,6 +1536,16 @@ function NavTab({ label, active, onClick }) {
       }}
     >
       {label}
+      {badge > 0 && (
+        <span style={{
+          position: "absolute", top: -4, right: -4,
+          minWidth: 16, height: 16, borderRadius: 8,
+          background: "#ef4444", color: "#fff",
+          fontSize: 9, fontWeight: 700,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          padding: "0 4px", lineHeight: 1,
+        }}>{badge}</span>
+      )}
     </button>
   );
 }
@@ -2465,6 +2480,867 @@ function ScheduleView({ analytics, day, currentPhase, projectDuration, ganttPhas
           </tbody>
         </table>
       </div>
+    </div>
+  );
+}
+
+/* ───────────────────── configure panel ───────────────────── */
+
+const CONFIGURE_SECTIONS = ["Phases", "Cranes", "Deliveries", "Workforce", "Equipment", "Milestones"];
+
+const PRESET_COLORS = ["#3b82f6", "#8b5cf6", "#22c55e", "#f59e0b", "#ef4444", "#64748b", "#06b6d4", "#ec4899"];
+
+const MATERIAL_TYPES = ["Concrete", "Rebar", "Structural Steel", "MEP Conduit", "Lumber", "Masonry"];
+const DELIVERY_RECURRING = ["None", "Weekly", "Biweekly"];
+const DELIVERY_TIME_WINDOWS = ["Early Morning 6-8am", "Morning 8-10am", "Midday 11am-1pm", "Afternoon 2-4pm"];
+
+const EQUIPMENT_TYPES = ["Excavator", "Concrete Pump", "Man Lift", "Scissor Lift", "Telehandler", "Forklift", "Compactor", "Generator", "Water Pump"];
+
+const MILESTONE_TYPES = ["Concrete Pour", "Steel Erection Start", "MEP Rough-In Start", "Inspection Day", "Owner Walkthrough", "Weather Buffer", "Subcontractor Mobilization", "Substantial Completion"];
+const MILESTONE_IMPACTS = ["No Heavy Equipment", "Extra Labor Required", "Delivery Blackout", "Critical Path Event"];
+
+const milestoneColor = (type) => {
+  if (type === "Concrete Pour") return "#3b82f6";
+  if (type === "Inspection Day") return "#eab308";
+  if (type === "Critical Path Event") return "#ef4444";
+  return "#64748b";
+};
+
+const cfgInput = {
+  height: 32, background: "#0c1221", border: "1px solid #1e293b", color: "#e2e8f0",
+  borderRadius: 6, fontSize: 12, fontFamily: "inherit", padding: "0 8px", outline: "none",
+};
+const cfgLabel = { fontSize: 10, color: "#94a3b8", textTransform: "uppercase", marginBottom: 2 };
+const cfgCard = {
+  background: "#0f1520", border: "1px solid #1e293b", borderRadius: 8, padding: 14,
+};
+
+function getValidationIssues(config, cells) {
+  const issues = [];
+  const colLabel = (x) => String.fromCharCode(65 + (x % 26));
+  const posLabel = (x, y) => `${colLabel(x)}${y + 1}`;
+  const parseDays = (s) => {
+    if (!s) return [];
+    return s.split(",").map((d) => parseInt(d.trim(), 10)).filter((d) => !isNaN(d));
+  };
+
+  // ── PHASE ERRORS ──
+  const phases = config.phases;
+  for (let i = 0; i < phases.length; i++) {
+    for (let j = i + 1; j < phases.length; j++) {
+      const a = phases[i], b = phases[j];
+      const oStart = Math.max(a.startDay, b.startDay);
+      const oEnd = Math.min(a.endDay, b.endDay);
+      if (oStart <= oEnd) {
+        issues.push({ severity: "error", section: "phases",
+          message: `Phases "${a.name || a.id}" and "${b.name || b.id}" overlap on days ${oStart}-${oEnd}` });
+      }
+    }
+  }
+  if (phases.length > 0) {
+    const sorted = [...phases].sort((a, b) => a.startDay - b.startDay);
+    for (let i = 1; i < sorted.length; i++) {
+      const gap0 = sorted[i - 1].endDay + 1;
+      const gap1 = sorted[i].startDay - 1;
+      if (gap0 <= gap1) {
+        issues.push({ severity: "error", section: "phases",
+          message: `Days ${gap0}-${gap1} are not assigned to any phase` });
+      }
+    }
+  }
+
+  // ── DELIVERY ERRORS ──
+  const blackoutDays = new Set(
+    config.milestones.filter((m) => m.impact === "Delivery Blackout").map((m) => m.day)
+  );
+  const dayEntryCount = {};
+
+  config.deliveries.forEach((del, idx) => {
+    const n = idx + 1;
+    if (!del.entryPoint) {
+      issues.push({ severity: "error", section: "deliveries",
+        message: `Delivery #${n} has no entry point — trucks cannot access the site` });
+    }
+
+    if (del.destination) {
+      const destIdx = Number(del.destination);
+      const destCell = cells[destIdx];
+      if (destCell) {
+        const ox = destIdx % GRID, oy = Math.floor(destIdx / GRID);
+        const w = destCell.width || 1, h = destCell.height || 1;
+        let hasRoad = false;
+        for (let dy = 0; dy < h && !hasRoad; dy++) {
+          for (let dx = 0; dx < w && !hasRoad; dx++) {
+            for (const [nx, ny] of [[ox+dx-1,oy+dy],[ox+dx+1,oy+dy],[ox+dx,oy+dy-1],[ox+dx,oy+dy+1]]) {
+              if (nx < 0 || nx >= GRID || ny < 0 || ny >= GRID) continue;
+              if (nx >= ox && nx < ox + w && ny >= oy && ny < oy + h) continue;
+              const nc = cells[ny * GRID + nx];
+              if (nc && nc.id === "road") { hasRoad = true; break; }
+            }
+          }
+        }
+        if (!hasRoad) {
+          issues.push({ severity: "error", section: "deliveries",
+            message: `Delivery #${n} destination zone has no adjacent road — trucks cannot unload` });
+        }
+      }
+    }
+
+    const days = parseDays(del.days);
+    days.forEach((d) => {
+      if (del.entryPoint) {
+        const k = `${d}::${del.entryPoint}`;
+        dayEntryCount[k] = (dayEntryCount[k] || 0) + 1;
+      }
+      if (blackoutDays.has(d)) {
+        issues.push({ severity: "error", section: "deliveries",
+          message: `Delivery on Day ${d} conflicts with a delivery blackout milestone` });
+      }
+    });
+  });
+
+  for (const [k, cnt] of Object.entries(dayEntryCount)) {
+    if (cnt > 1) {
+      const d = k.split("::")[0];
+      issues.push({ severity: "warning", section: "deliveries",
+        message: `Day ${d} has ${cnt} deliveries through the same entry point — trucks will queue` });
+    }
+  }
+
+  // ── CRANE ERRORS ──
+  config.cranes.forEach((crane) => {
+    const pos = posLabel(crane.x, crane.y);
+    if (crane.departureDay < crane.arrivalDay) {
+      issues.push({ severity: "error", section: "cranes",
+        message: `Crane at ${pos} has departure day before arrival day` });
+    }
+    if (crane.type === "Mobile Crane" && !crane.entryRoad) {
+      issues.push({ severity: "error", section: "cranes",
+        message: `Mobile crane at ${pos} has no entry road — cannot be mobilized` });
+    }
+  });
+
+  for (let i = 0; i < config.cranes.length; i++) {
+    for (let j = i + 1; j < config.cranes.length; j++) {
+      const a = config.cranes[i], b = config.cranes[j];
+      const oStart = Math.max(a.arrivalDay, b.arrivalDay);
+      const oEnd = Math.min(a.departureDay, b.departureDay);
+      if (oStart <= oEnd) {
+        const dist = Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y));
+        if (dist <= 3) {
+          issues.push({ severity: "warning", section: "cranes",
+            message: `Cranes at ${posLabel(a.x, a.y)} and ${posLabel(b.x, b.y)} may have overlapping swing radii during Days ${oStart}-${oEnd} — verify anti-collision system` });
+        }
+      }
+    }
+  }
+
+  // ── WORKFORCE WARNINGS ──
+  const workerZoneCount = cells.filter((c) => c && c.isOrigin && c.id === "workers").length;
+  const maxCap = workerZoneCount * 25;
+
+  config.phases.forEach((phase) => {
+    const wf = config.workforce[phase.id];
+    if (!wf || wf.total === 0) {
+      issues.push({ severity: "warning", section: "workforce",
+        message: `Phase "${phase.name || phase.id}" has no workforce configured` });
+    } else if (workerZoneCount > 0 && wf.total > maxCap) {
+      issues.push({ severity: "warning", section: "workforce",
+        message: `Phase "${phase.name || phase.id}" workforce (${wf.total}) exceeds site capacity (${maxCap}) — add worker zones or reduce headcount` });
+    }
+  });
+
+  // ── EQUIPMENT WARNINGS ──
+  const concreteDays = new Set();
+  config.deliveries.forEach((del) => {
+    if (del.material === "Concrete") parseDays(del.days).forEach((d) => concreteDays.add(d));
+  });
+  config.equipment.forEach((eq) => {
+    if (eq.type === "Concrete Pump") {
+      let idleDay = null;
+      for (let d = eq.arrivalDay; d <= eq.departureDay; d++) {
+        if (!concreteDays.has(d)) { idleDay = d; break; }
+      }
+      if (idleDay !== null) {
+        issues.push({ severity: "warning", section: "equipment",
+          message: `Concrete pump active on Day ${idleDay} but no concrete delivery scheduled — equipment may be idle` });
+      }
+    }
+  });
+
+  return issues;
+}
+
+function ConfigurePanel({ cells, projectDuration, onConfigSave, onValidationChange }) {
+  console.log('cells received:', cells?.length, cells?.filter(c => c?.isOrigin && c?.id === 'crane').length, 'cranes');
+  const [section, setSection] = useState("Phases");
+  const [saved, setSaved] = useState(false);
+  const [config, setConfig] = useState({
+    phases: [
+      { id: "site-prep", name: "Site Preparation", startDay: 1, endDay: 10, color: "#64748b" },
+      { id: "foundation", name: "Foundation", startDay: 11, endDay: 30, color: "#3b82f6" },
+      { id: "structural", name: "Structural", startDay: 31, endDay: 60, color: "#8b5cf6" },
+      { id: "mep", name: "MEP", startDay: 61, endDay: 75, color: "#f59e0b" },
+      { id: "finishing", name: "Finishing", startDay: 76, endDay: 88, color: "#22c55e" },
+      { id: "closeout", name: "Closeout", startDay: 89, endDay: 90, color: "#ef4444" },
+    ],
+    cranes: [],
+    deliveries: [],
+    workforce: {
+      "site-prep": { total: 10, laborers: 8, operators: 2 },
+      foundation: { total: 25, laborers: 12, carpenters: 8, ironworkers: 3, operators: 2 },
+      structural: { total: 55, laborers: 10, carpenters: 5, ironworkers: 30, operators: 10 },
+      mep: { total: 40, laborers: 5, electricians: 15, plumbers: 15, operators: 5 },
+      finishing: { total: 25, laborers: 8, carpenters: 8, painters: 7, operators: 2 },
+      closeout: { total: 10, laborers: 8, operators: 2 },
+    },
+    equipment: [],
+    milestones: [],
+  });
+
+  const craneZones = (cells || []).reduce((acc, cell, idx) => {
+    if (cell && cell.isOrigin && cell.id === 'crane') acc.push({ cell, index: idx, idx, x: idx % GRID, y: Math.floor(idx / GRID) });
+    return acc;
+  }, []);
+
+  const roadZones = cells
+    .map((c, i) => ({ cell: c, index: i }))
+    .filter(({ cell }) => cell && cell.isOrigin && cell.id === 'road')
+    .map(({ index }) => ({ idx: index, x: index % GRID, y: Math.floor(index / GRID) }));
+
+  const edgeRoads = roadZones.filter(
+    (r) => r.x === 0 || r.x === GRID - 1 || r.y === 0 || r.y === GRID - 1
+  );
+
+  const materialZones = cells
+    .map((c, i) => ({ cell: c, index: i }))
+    .filter(({ cell }) => cell && cell.isOrigin && cell.id === 'materials')
+    .map(({ index }) => ({ idx: index, x: index % GRID, y: Math.floor(index / GRID) }));
+
+  const nonRoadZones = cells
+    .map((c, i) => ({ cell: c, index: i }))
+    .filter(({ cell }) => cell && cell.isOrigin && cell.id !== 'road')
+    .map(({ cell, index }) => ({ idx: index, x: index % GRID, y: Math.floor(index / GRID), type: cell.id }));
+
+  const colLabel = (x) => String.fromCharCode(65 + (x % 26));
+  const posLabel = (x, y) => `${colLabel(x)}${y + 1}`;
+
+  const updatePhase = (idx, field, value) => {
+    setConfig((prev) => {
+      const phases = [...prev.phases];
+      phases[idx] = { ...phases[idx], [field]: value };
+      return { ...prev, phases };
+    });
+  };
+
+  const addPhase = () => {
+    setConfig((prev) => ({
+      ...prev,
+      phases: [...prev.phases, { id: `phase-${Date.now()}`, name: "", startDay: 1, endDay: 10, color: "#64748b" }],
+    }));
+  };
+
+  const removePhase = (idx) => {
+    setConfig((prev) => ({ ...prev, phases: prev.phases.filter((_, i) => i !== idx) }));
+  };
+
+  const updateDelivery = (idx, field, value) => {
+    setConfig((prev) => {
+      const deliveries = [...prev.deliveries];
+      deliveries[idx] = { ...deliveries[idx], [field]: value };
+      return { ...prev, deliveries };
+    });
+  };
+
+  const addDelivery = () => {
+    setConfig((prev) => ({
+      ...prev,
+      deliveries: [
+        ...prev.deliveries,
+        { id: `del-${Date.now()}`, material: "Concrete", destination: "", days: "", recurring: "None", truckCount: 1, entryPoint: "", timeWindow: "Morning 8-10am", notes: "" },
+      ],
+    }));
+  };
+
+  const removeDelivery = (idx) => {
+    setConfig((prev) => ({ ...prev, deliveries: prev.deliveries.filter((_, i) => i !== idx) }));
+  };
+
+  const updateWorkforce = (phaseId, field, value) => {
+    setConfig((prev) => ({
+      ...prev,
+      workforce: { ...prev.workforce, [phaseId]: { ...prev.workforce[phaseId], [field]: Number(value) || 0 } },
+    }));
+  };
+
+  const updateEquipment = (idx, field, value) => {
+    setConfig((prev) => {
+      const equipment = [...prev.equipment];
+      equipment[idx] = { ...equipment[idx], [field]: value };
+      return { ...prev, equipment };
+    });
+  };
+
+  const addEquipment = () => {
+    setConfig((prev) => ({
+      ...prev,
+      equipment: [
+        ...prev.equipment,
+        { id: `eq-${Date.now()}`, type: "Excavator", zone: "", arrivalDay: 1, departureDay: 30, phase: "foundation", notes: "" },
+      ],
+    }));
+  };
+
+  const removeEquipment = (idx) => {
+    setConfig((prev) => ({ ...prev, equipment: prev.equipment.filter((_, i) => i !== idx) }));
+  };
+
+  const updateMilestone = (idx, field, value) => {
+    setConfig((prev) => {
+      const milestones = [...prev.milestones];
+      milestones[idx] = { ...milestones[idx], [field]: value };
+      return { ...prev, milestones };
+    });
+  };
+
+  const addMilestone = () => {
+    setConfig((prev) => ({
+      ...prev,
+      milestones: [
+        ...prev.milestones,
+        { id: `ms-${Date.now()}`, name: "", day: 1, type: "Concrete Pour", impact: "No Heavy Equipment", notes: "" },
+      ],
+    }));
+  };
+
+  const removeMilestone = (idx) => {
+    setConfig((prev) => ({ ...prev, milestones: prev.milestones.filter((_, i) => i !== idx) }));
+  };
+
+  const updateCrane = (idx, field, value) => {
+    setConfig((prev) => {
+      const cranes = [...prev.cranes];
+      cranes[idx] = { ...cranes[idx], [field]: value };
+      return { ...prev, cranes };
+    });
+  };
+
+  useEffect(() => {
+    if (craneZones.length > 0 && config.cranes.length === 0) {
+      setConfig((prev) => ({
+        ...prev,
+        cranes: craneZones.map((cz) => ({
+          id: `crane-${cz.x}-${cz.y}`, x: cz.x, y: cz.y, type: "Tower Crane",
+          arrivalDay: 1, departureDay: projectDuration, entryRoad: "", notes: "",
+        })),
+      }));
+    }
+  }, [craneZones.length]);
+
+  const handleSave = () => {
+    onConfigSave(config);
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+  };
+
+  const sectionCounts = {
+    Phases: config.phases.length,
+    Cranes: config.cranes.length,
+    Deliveries: config.deliveries.length,
+    Workforce: Object.keys(config.workforce).length,
+    Equipment: config.equipment.length,
+    Milestones: config.milestones.length,
+  };
+
+  const workforceTradesFor = (phaseId) => {
+    const base = ["laborers", "operators"];
+    if (phaseId === "site-prep" || phaseId === "closeout") return base;
+    if (phaseId === "foundation" || phaseId === "structural") return ["laborers", "carpenters", "ironworkers", "operators", "other"];
+    if (phaseId === "mep") return ["laborers", "electricians", "plumbers", "hvac", "operators", "other"];
+    if (phaseId === "finishing") return ["laborers", "carpenters", "painters", "glaziers", "operators", "other"];
+    return ["laborers", "operators", "other"];
+  };
+
+  const tradeColors = {
+    laborers: "#64748b", carpenters: "#f59e0b", ironworkers: "#8b5cf6", operators: "#3b82f6",
+    electricians: "#eab308", plumbers: "#06b6d4", hvac: "#ef4444", painters: "#22c55e",
+    glaziers: "#ec4899", other: "#475569",
+  };
+
+  const sortedMilestones = [...config.milestones].sort((a, b) => a.day - b.day);
+
+  const validationIssues = useMemo(() => getValidationIssues(config, cells), [config, cells]);
+  const errorCount = validationIssues.filter((i) => i.severity === "error").length;
+  const warningCount = validationIssues.filter((i) => i.severity === "warning").length;
+
+  useEffect(() => {
+    if (onValidationChange) onValidationChange(errorCount);
+  }, [errorCount, onValidationChange]);
+
+  return (
+    <div style={{ display: "flex", height: "100%", background: "#080c18", overflow: "hidden" }}>
+      {/* Sidebar */}
+      <div style={{ width: 200, background: "#0f1520", borderRight: "1px solid #1e293b", display: "flex", flexDirection: "column", flexShrink: 0 }}>
+        <div style={{ padding: "16px 12px 8px", fontSize: 11, color: "#475569", textTransform: "uppercase", letterSpacing: "0.06em" }}>
+          Configuration
+        </div>
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 2, padding: "0 8px" }}>
+          {CONFIGURE_SECTIONS.map((s) => (
+            <button
+              key={s}
+              onClick={() => setSection(s)}
+              style={{
+                background: section === s ? "#1e293b" : "transparent",
+                border: "none", color: section === s ? "#e2e8f0" : "#94a3b8",
+                fontSize: 12, fontWeight: 500, padding: "8px 10px", borderRadius: 6,
+                cursor: "pointer", textAlign: "left", fontFamily: "inherit",
+                display: "flex", justifyContent: "space-between", alignItems: "center",
+              }}
+            >
+              {s}
+              {sectionCounts[s] > 0 && (
+                <span style={{ fontSize: 10, color: "#64748b", background: "#1e293b", borderRadius: 8, padding: "1px 6px" }}>
+                  {sectionCounts[s]}
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
+        <div style={{ padding: 12, borderTop: "1px solid #1e293b" }}>
+          <button
+            onClick={handleSave}
+            style={{
+              width: "100%", height: 36, borderRadius: 8, border: "none",
+              background: saved ? "linear-gradient(135deg, #22c55e, #16a34a)" : "linear-gradient(135deg, #3b82f6, #2563eb)",
+              color: "#fff", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit",
+              display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+              transition: "background 0.2s",
+            }}
+          >
+            {saved ? "✓ Saved!" : "Save Configuration"}
+          </button>
+        </div>
+      </div>
+
+      {/* Main content */}
+      <div style={{ flex: 1, overflowY: "auto", padding: 20 }}>
+        {section === "Phases" && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <div style={{ fontSize: 14, fontWeight: 600, color: "#e2e8f0", marginBottom: 4 }}>Construction Phases</div>
+            {config.phases.map((phase, idx) => (
+              <PhaseCard key={phase.id} phase={phase} idx={idx}
+                onUpdate={updatePhase} onRemove={removePhase} />
+            ))}
+            <button onClick={addPhase} style={{
+              height: 36, borderRadius: 8, border: "1px dashed #1e293b", background: "transparent",
+              color: "#64748b", fontSize: 12, cursor: "pointer", fontFamily: "inherit",
+            }}>
+              + Add Phase
+            </button>
+          </div>
+        )}
+
+        {section === "Cranes" && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <div style={{ fontSize: 14, fontWeight: 600, color: "#e2e8f0", marginBottom: 4 }}>Crane Configuration</div>
+            {craneZones.length === 0 ? (
+              <div style={{ ...cfgCard, color: "#64748b", fontSize: 13, textAlign: "center", padding: 32 }}>
+                Place crane zones on the site plan first
+              </div>
+            ) : (
+              config.cranes.map((crane, idx) => (
+                <div key={crane.id} style={{ ...cfgCard, borderLeft: "3px solid #eab308" }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: "#e2e8f0", marginBottom: 10 }}>
+                    Crane at {posLabel(crane.x, crane.y)}
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                    <div>
+                      <div style={cfgLabel}>Type</div>
+                      <select value={crane.type} onChange={(e) => updateCrane(idx, "type", e.target.value)}
+                        style={{ ...cfgInput, width: "100%" }}>
+                        <option>Tower Crane</option>
+                        <option>Mobile Crane</option>
+                        <option>Boom Truck</option>
+                      </select>
+                    </div>
+                    <div>
+                      <div style={cfgLabel}>Entry Road</div>
+                      <select value={crane.entryRoad} onChange={(e) => updateCrane(idx, "entryRoad", e.target.value)}
+                        style={{ ...cfgInput, width: "100%" }}>
+                        <option value="">Select...</option>
+                        {roadZones.map((rz) => (
+                          <option key={rz.idx} value={rz.idx}>Road at {posLabel(rz.x, rz.y)}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <div style={cfgLabel}>Arrival Day</div>
+                      <input type="number" min={1} max={projectDuration} value={crane.arrivalDay}
+                        onChange={(e) => updateCrane(idx, "arrivalDay", Number(e.target.value))}
+                        style={{ ...cfgInput, width: "100%" }} />
+                    </div>
+                    <div>
+                      <div style={cfgLabel}>Departure Day</div>
+                      <input type="number" min={1} max={projectDuration} value={crane.departureDay}
+                        onChange={(e) => updateCrane(idx, "departureDay", Number(e.target.value))}
+                        style={{ ...cfgInput, width: "100%" }} />
+                    </div>
+                  </div>
+                  <div style={{ marginTop: 10 }}>
+                    <div style={cfgLabel}>Notes</div>
+                    <textarea value={crane.notes} onChange={(e) => updateCrane(idx, "notes", e.target.value)}
+                      rows={2} style={{ ...cfgInput, width: "100%", height: "auto", padding: 8, resize: "vertical" }} />
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        )}
+
+        {section === "Deliveries" && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <div style={{ fontSize: 14, fontWeight: 600, color: "#e2e8f0", marginBottom: 4 }}>Delivery Schedule</div>
+            {config.deliveries.map((del, idx) => (
+              <div key={del.id} style={{ ...cfgCard, borderLeft: "3px solid #f97316", position: "relative" }}>
+                <button onClick={() => removeDelivery(idx)} style={{
+                  position: "absolute", top: 8, right: 8, background: "none", border: "none",
+                  color: "#475569", cursor: "pointer", fontSize: 14, fontFamily: "inherit",
+                }}>✕</button>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
+                  <div>
+                    <div style={cfgLabel}>Material Type</div>
+                    <select value={del.material} onChange={(e) => updateDelivery(idx, "material", e.target.value)}
+                      style={{ ...cfgInput, width: "100%" }}>
+                      {MATERIAL_TYPES.map((m) => <option key={m}>{m}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <div style={cfgLabel}>Destination Zone</div>
+                    <select value={del.destination} onChange={(e) => updateDelivery(idx, "destination", e.target.value)}
+                      style={{ ...cfgInput, width: "100%" }}>
+                      <option value="">Select...</option>
+                      {materialZones.map((mz) => (
+                        <option key={mz.idx} value={mz.idx}>Materials at {posLabel(mz.x, mz.y)}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <div style={cfgLabel}>Scheduled Days</div>
+                    <input value={del.days} onChange={(e) => updateDelivery(idx, "days", e.target.value)}
+                      placeholder="8, 15, 22, 29" style={{ ...cfgInput, width: "100%" }} />
+                  </div>
+                  <div>
+                    <div style={cfgLabel}>Recurring</div>
+                    <select value={del.recurring} onChange={(e) => updateDelivery(idx, "recurring", e.target.value)}
+                      style={{ ...cfgInput, width: "100%" }}>
+                      {DELIVERY_RECURRING.map((r) => <option key={r}>{r}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <div style={cfgLabel}>Truck Count</div>
+                    <input type="number" min={1} max={5} value={del.truckCount}
+                      onChange={(e) => updateDelivery(idx, "truckCount", Number(e.target.value))}
+                      style={{ ...cfgInput, width: "100%" }} />
+                  </div>
+                  <div>
+                    <div style={cfgLabel}>Entry Point</div>
+                    <select value={del.entryPoint} onChange={(e) => updateDelivery(idx, "entryPoint", e.target.value)}
+                      style={{ ...cfgInput, width: "100%" }}>
+                      <option value="">Select...</option>
+                      {edgeRoads.map((er) => (
+                        <option key={er.idx} value={er.idx}>Road at {posLabel(er.x, er.y)}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <div style={cfgLabel}>Time Window</div>
+                    <select value={del.timeWindow} onChange={(e) => updateDelivery(idx, "timeWindow", e.target.value)}
+                      style={{ ...cfgInput, width: "100%" }}>
+                      {DELIVERY_TIME_WINDOWS.map((tw) => <option key={tw}>{tw}</option>)}
+                    </select>
+                  </div>
+                  <div style={{ gridColumn: "span 2" }}>
+                    <div style={cfgLabel}>Notes</div>
+                    <input value={del.notes} onChange={(e) => updateDelivery(idx, "notes", e.target.value)}
+                      style={{ ...cfgInput, width: "100%" }} />
+                  </div>
+                </div>
+              </div>
+            ))}
+            <button onClick={addDelivery} style={{
+              height: 36, borderRadius: 8, border: "1px dashed #1e293b", background: "transparent",
+              color: "#64748b", fontSize: 12, cursor: "pointer", fontFamily: "inherit",
+            }}>
+              + Add Delivery
+            </button>
+          </div>
+        )}
+
+        {section === "Workforce" && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <div style={{ fontSize: 14, fontWeight: 600, color: "#e2e8f0", marginBottom: 4 }}>Workforce Planning</div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 12 }}>
+              {config.phases.map((phase) => {
+                const wf = config.workforce[phase.id] || { total: 0 };
+                const trades = workforceTradesFor(phase.id);
+                const total = wf.total || 1;
+                return (
+                  <div key={phase.id} style={{ ...cfgCard, borderTop: `3px solid ${phase.color}` }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: "#e2e8f0", marginBottom: 10 }}>
+                      {phase.name || phase.id}
+                    </div>
+                    <div style={{ marginBottom: 8 }}>
+                      <div style={cfgLabel}>Total Workers</div>
+                      <input type="number" min={0} value={wf.total || 0}
+                        onChange={(e) => updateWorkforce(phase.id, "total", e.target.value)}
+                        style={{ ...cfgInput, width: 80 }} />
+                    </div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                      {trades.map((trade) => (
+                        <div key={trade} style={{ minWidth: 70 }}>
+                          <div style={cfgLabel}>{trade}</div>
+                          <input type="number" min={0} value={wf[trade] || 0}
+                            onChange={(e) => updateWorkforce(phase.id, trade, e.target.value)}
+                            style={{ ...cfgInput, width: 60 }} />
+                        </div>
+                      ))}
+                    </div>
+                    <div style={{ marginTop: 10, height: 8, borderRadius: 4, overflow: "hidden", display: "flex", background: "#1e293b" }}>
+                      {trades.map((trade) => {
+                        const val = wf[trade] || 0;
+                        if (val === 0) return null;
+                        return (
+                          <div key={trade} style={{
+                            width: `${(val / total) * 100}%`, background: tradeColors[trade] || "#475569",
+                            minWidth: 2, transition: "width 0.2s",
+                          }} title={`${trade}: ${val}`} />
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {section === "Equipment" && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <div style={{ fontSize: 14, fontWeight: 600, color: "#e2e8f0", marginBottom: 4 }}>Equipment Management</div>
+            {config.equipment.map((eq, idx) => (
+              <div key={eq.id} style={{ ...cfgCard, borderLeft: "3px solid #06b6d4", position: "relative" }}>
+                <button onClick={() => removeEquipment(idx)} style={{
+                  position: "absolute", top: 8, right: 8, background: "none", border: "none",
+                  color: "#475569", cursor: "pointer", fontSize: 14, fontFamily: "inherit",
+                }}>✕</button>
+                {(eq.type === "Excavator" || eq.type === "Concrete Pump") && (
+                  <div style={{
+                    fontSize: 11, color: "#f59e0b", background: "#f59e0b15", border: "1px solid #f59e0b30",
+                    borderRadius: 6, padding: "4px 10px", marginBottom: 10, display: "inline-block",
+                  }}>
+                    ⚠ High coordination required — schedule deliveries around this equipment
+                  </div>
+                )}
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
+                  <div>
+                    <div style={cfgLabel}>Equipment Type</div>
+                    <select value={eq.type} onChange={(e) => updateEquipment(idx, "type", e.target.value)}
+                      style={{ ...cfgInput, width: "100%" }}>
+                      {EQUIPMENT_TYPES.map((t) => <option key={t}>{t}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <div style={cfgLabel}>Position Zone</div>
+                    <select value={eq.zone} onChange={(e) => updateEquipment(idx, "zone", e.target.value)}
+                      style={{ ...cfgInput, width: "100%" }}>
+                      <option value="">Select...</option>
+                      {nonRoadZones.map((nz) => (
+                        <option key={nz.idx} value={nz.idx}>{nz.type} at {posLabel(nz.x, nz.y)}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <div style={cfgLabel}>Active Phase</div>
+                    <select value={eq.phase} onChange={(e) => updateEquipment(idx, "phase", e.target.value)}
+                      style={{ ...cfgInput, width: "100%" }}>
+                      {config.phases.map((p) => <option key={p.id} value={p.id}>{p.name || p.id}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <div style={cfgLabel}>Arrival Day</div>
+                    <input type="number" min={1} max={projectDuration} value={eq.arrivalDay}
+                      onChange={(e) => updateEquipment(idx, "arrivalDay", Number(e.target.value))}
+                      style={{ ...cfgInput, width: "100%" }} />
+                  </div>
+                  <div>
+                    <div style={cfgLabel}>Departure Day</div>
+                    <input type="number" min={1} max={projectDuration} value={eq.departureDay}
+                      onChange={(e) => updateEquipment(idx, "departureDay", Number(e.target.value))}
+                      style={{ ...cfgInput, width: "100%" }} />
+                  </div>
+                  <div>
+                    <div style={cfgLabel}>Notes</div>
+                    <input value={eq.notes} onChange={(e) => updateEquipment(idx, "notes", e.target.value)}
+                      style={{ ...cfgInput, width: "100%" }} />
+                  </div>
+                </div>
+              </div>
+            ))}
+            <button onClick={addEquipment} style={{
+              height: 36, borderRadius: 8, border: "1px dashed #1e293b", background: "transparent",
+              color: "#64748b", fontSize: 12, cursor: "pointer", fontFamily: "inherit",
+            }}>
+              + Add Equipment
+            </button>
+          </div>
+        )}
+
+        {section === "Milestones" && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <div style={{ fontSize: 14, fontWeight: 600, color: "#e2e8f0", marginBottom: 4 }}>Project Milestones</div>
+            {sortedMilestones.map((ms) => {
+              const realIdx = config.milestones.findIndex((m) => m.id === ms.id);
+              return (
+                <div key={ms.id} style={{ ...cfgCard, borderLeft: `3px solid ${milestoneColor(ms.type)}`, position: "relative" }}>
+                  <button onClick={() => removeMilestone(realIdx)} style={{
+                    position: "absolute", top: 8, right: 8, background: "none", border: "none",
+                    color: "#475569", cursor: "pointer", fontSize: 14, fontFamily: "inherit",
+                  }}>✕</button>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
+                    <div>
+                      <div style={cfgLabel}>Name</div>
+                      <input value={ms.name} onChange={(e) => updateMilestone(realIdx, "name", e.target.value)}
+                        placeholder="Milestone name" style={{ ...cfgInput, width: "100%" }} />
+                    </div>
+                    <div>
+                      <div style={cfgLabel}>Day</div>
+                      <input type="number" min={1} max={projectDuration} value={ms.day}
+                        onChange={(e) => updateMilestone(realIdx, "day", Number(e.target.value))}
+                        style={{ ...cfgInput, width: "100%" }} />
+                    </div>
+                    <div>
+                      <div style={cfgLabel}>Type</div>
+                      <select value={ms.type} onChange={(e) => updateMilestone(realIdx, "type", e.target.value)}
+                        style={{ ...cfgInput, width: "100%" }}>
+                        {MILESTONE_TYPES.map((t) => <option key={t}>{t}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <div style={cfgLabel}>Impact</div>
+                      <select value={ms.impact} onChange={(e) => updateMilestone(realIdx, "impact", e.target.value)}
+                        style={{ ...cfgInput, width: "100%" }}>
+                        {MILESTONE_IMPACTS.map((imp) => <option key={imp}>{imp}</option>)}
+                      </select>
+                    </div>
+                    <div style={{ gridColumn: "span 2" }}>
+                      <div style={cfgLabel}>Notes</div>
+                      <textarea value={ms.notes} onChange={(e) => updateMilestone(realIdx, "notes", e.target.value)}
+                        rows={2} style={{ ...cfgInput, width: "100%", height: "auto", padding: 8, resize: "vertical" }} />
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+            <button onClick={addMilestone} style={{
+              height: 36, borderRadius: 8, border: "1px dashed #1e293b", background: "transparent",
+              color: "#64748b", fontSize: 12, cursor: "pointer", fontFamily: "inherit",
+            }}>
+              + Add Milestone
+            </button>
+          </div>
+        )}
+
+        {/* ── Validation Panel ── */}
+        <div style={{ marginTop: 24, borderTop: "1px solid #1e293b", paddingTop: 16 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+            <span style={{ fontSize: 11, fontWeight: 700, color: "#64748b", letterSpacing: "0.06em" }}>PLAN VALIDATION</span>
+            {errorCount > 0 && (
+              <span style={{
+                fontSize: 10, fontWeight: 700, color: "#fff", background: "#ef4444",
+                borderRadius: 8, padding: "1px 7px", lineHeight: "16px",
+              }}>{errorCount} {errorCount === 1 ? "error" : "errors"}</span>
+            )}
+            {warningCount > 0 && (
+              <span style={{
+                fontSize: 10, fontWeight: 700, color: "#000", background: "#eab308",
+                borderRadius: 8, padding: "1px 7px", lineHeight: "16px",
+              }}>{warningCount} {warningCount === 1 ? "warning" : "warnings"}</span>
+            )}
+          </div>
+          {validationIssues.length === 0 ? (
+            <div style={{
+              ...cfgCard, display: "flex", alignItems: "center", gap: 8,
+              color: "#22c55e", fontSize: 13,
+            }}>
+              <span style={{ fontSize: 16 }}>✓</span> Plan looks good
+            </div>
+          ) : (
+            <div style={{ maxHeight: 220, overflowY: "auto", display: "flex", flexDirection: "column", gap: 4 }}>
+              {validationIssues.map((issue, i) => (
+                <div key={i} style={{
+                  ...cfgCard, display: "flex", alignItems: "flex-start", gap: 8,
+                  padding: "8px 12px", fontSize: 12, color: "#cbd5e1",
+                }}>
+                  <span style={{
+                    width: 8, height: 8, borderRadius: "50%", flexShrink: 0, marginTop: 4,
+                    background: issue.severity === "error" ? "#ef4444" : issue.severity === "warning" ? "#eab308" : "#3b82f6",
+                  }} />
+                  <span style={{ flex: 1 }}>{issue.message}</span>
+                  <span style={{
+                    fontSize: 9, color: "#475569", background: "#1e293b", borderRadius: 4,
+                    padding: "1px 6px", flexShrink: 0, textTransform: "uppercase", letterSpacing: "0.04em",
+                  }}>{issue.section}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PhaseCard({ phase, idx, onUpdate, onRemove }) {
+  const [pickerOpen, setPickerOpen] = useState(false);
+  return (
+    <div style={{ ...cfgCard, borderLeft: `3px solid ${phase.color}`, display: "flex", alignItems: "center", gap: 12, position: "relative" }}>
+      <div style={{ position: "relative" }}>
+        <div
+          onClick={() => setPickerOpen(!pickerOpen)}
+          style={{ width: 24, height: 24, borderRadius: 6, background: phase.color, cursor: "pointer", border: "2px solid #1e293b" }}
+        />
+        {pickerOpen && (
+          <div style={{
+            position: "absolute", top: 30, left: 0, zIndex: 10, background: "#0f1520",
+            border: "1px solid #1e293b", borderRadius: 8, padding: 8,
+            display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 4,
+          }}>
+            {PRESET_COLORS.map((c) => (
+              <div key={c} onClick={() => { onUpdate(idx, "color", c); setPickerOpen(false); }}
+                style={{ width: 22, height: 22, borderRadius: 4, background: c, cursor: "pointer",
+                  border: phase.color === c ? "2px solid #e2e8f0" : "2px solid transparent" }} />
+            ))}
+          </div>
+        )}
+      </div>
+      <input value={phase.name} onChange={(e) => onUpdate(idx, "name", e.target.value)}
+        placeholder="Phase name" style={{ ...cfgInput, flex: 1 }} />
+      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        <div style={cfgLabel}>Start</div>
+        <input type="number" min={1} value={phase.startDay}
+          onChange={(e) => onUpdate(idx, "startDay", Number(e.target.value))}
+          style={{ ...cfgInput, width: 60, textAlign: "center" }} />
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        <div style={cfgLabel}>End</div>
+        <input type="number" min={1} value={phase.endDay}
+          onChange={(e) => onUpdate(idx, "endDay", Number(e.target.value))}
+          style={{ ...cfgInput, width: 60, textAlign: "center" }} />
+      </div>
+      <button onClick={() => onRemove(idx)} style={{
+        background: "none", border: "none", color: "#475569", cursor: "pointer",
+        fontSize: 14, fontFamily: "inherit", padding: 4,
+      }}>✕</button>
     </div>
   );
 }
