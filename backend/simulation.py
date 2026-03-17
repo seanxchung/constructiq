@@ -784,7 +784,7 @@ def detect_conflicts(
     # ── 4c. Crew shortage ─────────────────────────────────────────────
     for role, needed in crew_required.items():
         on_site = crew_on_site.get(role, 0)
-        if on_site >= needed:
+        if on_site >= needed * 0.6:
             continue
         shortfall = needed - on_site
         productivity_loss = round((shortfall / max(needed, 1)) * 100)
@@ -796,7 +796,7 @@ def detect_conflicts(
                 f"only {on_site} on site ({shortfall} short). Productivity "
                 f"reduced by ~{productivity_loss}%."
             ),
-            "cost_impact": _usd(shortfall * 650 + productivity_loss * 200),
+            "cost_impact": _usd(shortfall * 350 + productivity_loss * 100),
             "schedule_impact_days": max(1, shortfall),
             "suggestion": (
                 f"Call in {shortfall} additional {role}(s) or redistribute "
@@ -901,7 +901,7 @@ def detect_conflicts(
             if on_site >= needed:
                 continue
             ratio = on_site / max(needed, 1)
-            if ratio >= 0.7:
+            if ratio >= 0.5:
                 continue
             extension = round(task.get("duration_days", 0) * (1 - ratio))
             conflicts.append({
@@ -913,7 +913,7 @@ def detect_conflicts(
                     f"task extends ~{extension} days, cascading to all "
                     f"downstream tasks."
                 ),
-                "cost_impact": _usd(extension * 10_000),
+                "cost_impact": _usd(extension * 5_000),
                 "schedule_impact_days": extension,
                 "suggestion": (
                     f"Critical path task — every day it slips pushes the whole "
@@ -1101,6 +1101,30 @@ def _detect_zone_conflicts(
                     f"signal person when both operate simultaneously."
                 ),
             })
+
+    # Crane to building distance check
+    building_zones = [z for z in zones if z['type'] == 'building']
+    for crane in active_cranes:
+        for bz in building_zones:
+            dist = _dist(crane['x'], crane['y'], bz['x'], bz['y'])
+            if dist > 12:
+                conflicts.append({
+                    'type': 'crane_out_of_reach',
+                    'severity': 'HIGH',
+                    'message': f"Day {day}: {crane['name']} is {dist:.1f} grid cells from the building — outside effective lift radius. Materials cannot be placed on upper floors.",
+                    'cost_impact': _usd(8000),
+                    'schedule_impact_days': 2,
+                    'suggestion': f"Relocate {crane['name']} within 10 grid cells of the building footprint to maintain full lift coverage.",
+                })
+            elif dist < 2:
+                conflicts.append({
+                    'type': 'crane_too_close',
+                    'severity': 'MEDIUM',
+                    'message': f"Day {day}: {crane['name']} is only {dist:.1f} grid cells from the building foundation — risk of structural interference and reduced boom angle.",
+                    'cost_impact': _usd(4000),
+                    'schedule_impact_days': 0,
+                    'suggestion': f"Move {crane['name']} at least 2 grid cells from the building foundation for safe operations.",
+                })
 
 
 # ── 6. Scenario Comparison ────────────────────────────────────────────────────

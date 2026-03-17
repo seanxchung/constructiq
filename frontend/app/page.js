@@ -262,7 +262,7 @@ export default function Home() {
     fetch(`${API_BASE}/api/simulate`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ day, zones: buildZones(), project_duration: projectDuration, project_config: projectConfig }),
+      body: JSON.stringify({ day, zones: buildZones(), project_duration: projectDuration, project_config: projectConfig || savedConfig }),
     })
       .then((res) => res.ok ? res.json() : null)
       .then((data) => {
@@ -310,7 +310,7 @@ export default function Home() {
   }, [day, isPlaying, projectDuration]);
 
   useEffect(() => {
-    if (day < projectDuration || analytics.length === 0) return;
+    if (day < projectDuration || analytics.length === 0 || isPlaying) return;
     if (debriefFiredRef.current) return;
     debriefFiredRef.current = true;
 
@@ -342,7 +342,8 @@ export default function Home() {
 
   // Spawn delivery trucks when day matches a scheduled delivery day
   useEffect(() => {
-    if (!projectConfig?.deliveries || !isPlaying) return;
+    const activeConfig = projectConfig || savedConfig;
+    if (!activeConfig?.deliveries || !isPlaying) return;
     const newTrucks = [];
     projectConfig.deliveries.forEach((del) => {
       const scheduledDays = _parseDayList(del.days);
@@ -550,7 +551,7 @@ export default function Home() {
     fetch(`${API_BASE}/api/simulate`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ day: target, zones: buildZones(), project_duration: projectDuration, project_config: projectConfig }),
+      body: JSON.stringify({ day: target, zones: buildZones(), project_duration: projectDuration, project_config: projectConfig || savedConfig}),
     })
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
@@ -1154,31 +1155,28 @@ export default function Home() {
                           <span style={{ fontSize: 7, color: barClr, fontWeight: 600, lineHeight: 1, marginTop: 1 }}>
                             {Math.round(avgPct)}%
                           </span>
-                          <div style={{ position: "absolute", bottom: 3, left: 5, right: 5, height: 3, background: "#1e293b", borderRadius: 1.5 }}>
-                            <div style={{ width: `${avgPct}%`, height: "100%", background: barClr, borderRadius: 1.5, transition: "width 0.3s" }} />
+                          <div style={{ position: "absolute", bottom: 3, left: 5, right: 5, height: 5, background: "#1e293b", borderRadius: 2.5 }}>
+                            <div style={{ width: `${avgPct}%`, height: "100%", background: barClr, borderRadius: 2.5, transition: avgPct < 50 ? "width 0.5s ease, background 0.5s ease" : "width 0.3s", ...(avgPct < 20 ? { boxShadow: "0 0 6px #ef4444" } : {}) }} />
                           </div>
                         </>
                       );
 
                     } else if (cell?.id === "workers") {
-                      if (simulationState) {
-                        const wCount = workersByZone[simZoneId("workers", cx, cy)]?.count || 0;
-                        content = (
-                          <>
-                            <span style={{ fontSize: 13, fontWeight: 800, color: "#60a5fa", lineHeight: 1 }}>{wCount}</span>
-                            <span style={{ fontSize: 6, color: "#64748b", fontWeight: 600, lineHeight: 1, marginTop: 1, letterSpacing: "0.04em" }}>CREW</span>
-                          </>
-                        );
-                      } else {
-                        const numWZ = cells.filter((c) => c?.isOrigin && c.id === "workers").length;
-                        const cap = numWZ > 0 && optimizerWorkers > 0 ? Math.round(optimizerWorkers / numWZ) : 25;
-                        content = (
-                          <>
-                            <span style={{ fontSize: 13, fontWeight: 800, color: "#3b82f6", lineHeight: 1 }}>{cap}</span>
-                            <span style={{ fontSize: 6, color: "#64748b", fontWeight: 600, lineHeight: 1, marginTop: 1, letterSpacing: "0.04em" }}>CAP</span>
-                          </>
-                        );
-                      }
+                      const numWZ = cells.filter((c) => c?.isOrigin && c.id === "workers").length;
+                      const wCount = simulationState ? (workersByZone[simZoneId('workers', cx, cy)]?.count || 0) : (numWZ > 0 && optimizerWorkers > 0 ? Math.round(optimizerWorkers / numWZ) : 25);
+                      const dotColor = simulationState ? '#60a5fa' : '#3b82f6';
+                      const maxDots = 6;
+                      const dotsToShow = Math.min(wCount, maxDots);
+                      content = (
+                        <>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 2, justifyContent: 'center', padding: 2 }}>
+                            {Array.from({ length: dotsToShow }).map((_, di) => (
+                              <div key={di} style={{ width: 4, height: 4, borderRadius: '50%', background: dotColor }} />
+                            ))}
+                          </div>
+                          <span style={{ fontSize: 7, fontWeight: 800, color: dotColor, lineHeight: 1 }}>{wCount}</span>
+                        </>
+                      );
 
                     } else if (cell?.id === "crane") {
                       const craneData = craneByPos[`${cx}-${cy}`];
@@ -1376,7 +1374,7 @@ export default function Home() {
                   });
                   })()}
                 </div>
-                {deliveryRoutes.length > 0 && (
+                {(deliveryRoutes.length > 0 || activeCranes.length > 0) && (
                   <svg
                     style={{
                       position: "absolute", top: 0, left: 0,
@@ -1390,6 +1388,18 @@ export default function Home() {
                         x1={r.x1} y1={r.y1} x2={r.x2} y2={r.y2}
                         stroke="#f9731640" strokeWidth="1.5"
                         strokeDasharray="4 3"
+                      />
+                    ))}
+                    {activeCranes.map((crane) => (
+                      <circle
+                        key={crane.id}
+                        cx={crane.x * 34 + 17}
+                        cy={crane.y * 34 + 17}
+                        r={crane.swing_radius * 34}
+                        fill="none"
+                        stroke={crane.breakdown ? "#ef444440" : "#eab30840"}
+                        strokeWidth="1.5"
+                        strokeDasharray="6 3"
                       />
                     ))}
                   </svg>
@@ -2894,7 +2904,6 @@ function getValidationIssues(config, cells) {
 }
 
 function ConfigurePanel({ cells, projectDuration, onConfigSave, onValidationChange, config, onConfigChange }) {
-  console.log('cells received:', cells?.length, cells?.filter(c => c?.isOrigin && c?.id === 'crane').length, 'cranes');
   const [section, setSection] = useState("Phases");
   const [saved, setSaved] = useState(false);
 
