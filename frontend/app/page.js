@@ -2585,7 +2585,6 @@ function ScheduleView({ analytics, day, currentPhase, projectDuration, ganttPhas
                   rx={4}
                   fill={phase.color}
                   opacity={isPast ? 0.3 : isActive ? 0.7 : 0.45}
-                  rx={4}
                 />
 
                 {/* Progress fill within active phase */}
