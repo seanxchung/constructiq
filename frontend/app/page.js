@@ -299,27 +299,28 @@ export default function Home() {
         const hasHigh = conflicts.some((c) => c.severity === "HIGH");
         if (hasHigh) triggerAlert();
 
-        if (data?.ai_analysis) {
-          const currentTypes = new Set(conflicts.map((c) => c.type).filter(Boolean));
-          const prevTypes = prevConflictTypesRef.current;
-          const hasNewType = [...currentTypes].some((t) => !prevTypes.has(t));
-          const hasHighConflict = conflicts.some((c) => c.severity === "HIGH");
-          const materialLow = Object.values(data.simulation?.materials || {}).some((m) => m.pct_remaining < 20);
-          const hasBreakdown = conflicts.some((c) => c.type === "equipment_risk");
+        if (day < projectDuration) {
+          if (data?.ai_analysis) {
+            const currentSigs = new Set(conflicts.map((c) => `${c.type}-${c.description || c.severity}`).filter(Boolean));
+            const prevSigs = prevConflictTypesRef.current;
+            const hasNewSig = [...currentSigs].some((s) => !prevSigs.has(s));
+            const materialLow = Object.values(data.simulation?.materials || {}).some((m) => m.pct_remaining < 20);
+            const hasBreakdown = conflicts.some((c) => c.type === "equipment_risk");
 
-          if (hasNewType || materialLow || hasBreakdown) {
-            setMessages((m) => [...m, { role: "ai", text: `**Day ${day}:** ${data.ai_analysis}` }]);
+            if (hasNewSig || materialLow || hasBreakdown) {
+              setMessages((m) => [...m, { role: "ai", text: `**Day ${day}:** ${data.ai_analysis}` }]);
+            }
+            prevConflictTypesRef.current = currentSigs;
           }
-          prevConflictTypesRef.current = currentTypes;
-        }
 
-        if (data.simulation?.phase && data.simulation.phase !== prevPhaseRef.current && prevPhaseRef.current !== "") {
-          setMessages((m) => [...m, {
-            role: "ai",
-            text: `**Day ${day} — Phase Transition:** Moving into ${data.simulation.phase} phase. Crew composition and equipment requirements are shifting.`,
-          }]);
+          if (data.simulation?.phase && data.simulation.phase !== prevPhaseRef.current && prevPhaseRef.current !== "") {
+            setMessages((m) => [...m, {
+              role: "ai",
+              text: `**Day ${day} — Phase Transition:** Moving into ${data.simulation.phase} phase. Crew composition and equipment requirements are shifting.`,
+            }]);
+          }
+          prevPhaseRef.current = data.simulation?.phase || "";
         }
-        prevPhaseRef.current = data.simulation?.phase || "";
       })
       .catch(() => {})
       .finally(() => { simulatingRef.current = false; });
@@ -328,30 +329,7 @@ export default function Home() {
   useEffect(() => {
     if (day < projectDuration || debriefFiredRef.current) return;
     debriefFiredRef.current = true;
-
-    fetch(`${API_BASE}/api/ai/chat`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        message: `The ${projectDuration}-day scheduled project duration has ended. Based on the conflicts and cascade delays detected, write a project debrief. State whether the project likely finished on time or is projected to overrun, and by how many days. Total conflicts: ${analytics.reduce((s,a) => s + a.conflictCount, 0)}. Peak workers: ${Math.max(0, ...analytics.map(a => a.totalWorkers))}. Total cost exposure: $${analytics.reduce((s,a) => s + a.costImpact, 0).toLocaleString()}. Top conflict types: ${[...new Set(simConflicts.map(c => c.type))].join(', ') || 'none'}. Give a realistic retrospective on what drove risk and what should change next time.`,
-        zones: buildZones(),
-        project_duration: projectDuration,
-        current_conflicts: simConflicts,
-        analytics,
-      }),
-    })
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        if (data?.reply) {
-          setMessages((m) => [...m, { role: "ai", text: `**Day ${projectDuration} — Project Complete**\n\n${data.reply}` }]);
-        }
-      })
-      .catch(() => {
-        setMessages((m) => [...m, {
-          role: "ai",
-          text: "Simulation complete. Unable to generate AI debrief — please check that the backend is running.",
-        }]);
-      });
+    fireDebrief();
   }, [day, projectDuration]);
 
   // Spawn delivery trucks when day matches a scheduled delivery day
@@ -428,7 +406,15 @@ export default function Home() {
     return <LoginScreen />;
   }
 
-  const ganttPhases = buildGanttPhases(projectDuration);
+  const ganttPhases = (() => {
+    const mapped = (savedConfig?.phases || []).map(p => ({
+      label: p.name || p.id,
+      start: p.startDay,
+      end: p.endDay,
+      color: p.color,
+    }));
+    return mapped.length > 0 ? mapped : buildGanttPhases(projectDuration);
+  })();
 
   const handleDurationChange = (dur) => {
     if (dur === projectDuration) return;
@@ -558,6 +544,31 @@ export default function Home() {
     debriefFiredRef.current = false;
   };
 
+  const fireDebrief = (analyticsOverride) => {
+    const data = analyticsOverride || analytics;
+    const totalConflicts = data.reduce((s, a) => s + a.conflictCount, 0);
+    const peakWorkers = Math.max(0, ...data.map(a => a.totalWorkers));
+    const totalCost = data.reduce((s, a) => s + a.costImpact, 0);
+    const highestRiskDay = data.length > 0 ? data.reduce((best, a) => a.costImpact > (best.costImpact || 0) ? a : best, data[0]).day : 0;
+    const debriefPrompt = "The " + projectDuration + "-day simulation has completed. Generate a comprehensive project debrief. DATA: " + totalConflicts + " total conflicts, " + peakWorkers + " peak workers, $" + totalCost.toLocaleString() + " total cost exposure, highest risk day was Day " + highestRiskDay + ". Structure your response with these sections: 1. SCHEDULE OUTCOME - Did the project finish on time or overrun? If overrun by how many days at $15,000/day overhead? 2. BY THE NUMBERS - Summarize the key metrics. 3. WHAT WENT WELL - 2-3 things that worked. 4. WHAT WENT WRONG - Top 3 problems with specific day numbers and dollar figures. 5. RECOMMENDATIONS - 3-4 specific actionable changes for the next run referencing actual zone positions and days. 6. BOTTOM LINE - One sentence: greenlight this plan or iterate? Keep tone direct and experienced.";
+    setMessages(function(m) { return [...m, { role: "divider", text: "Project Debrief" }]; });
+    fetch(API_BASE + "/api/ai/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: debriefPrompt, day: day || projectDuration, zones: buildZones(), project_duration: projectDuration }),
+    })
+      .then(function(res) { return res.ok ? res.json() : null; })
+      .then(function(d) {
+        if (d && d.reply) {
+          setMessages(function(m) { return [...m, { role: "ai", text: "**PROJECT COMPLETE**\n\n" + d.reply, isDebrief: true }]; });
+        }
+      })
+      .catch(function(err) {
+        console.error("Debrief failed:", err);
+        setMessages(function(m) { return [...m, { role: "ai", text: "Simulation complete. Unable to generate debrief." }]; });
+      });
+  };
+
   const skipDays = (n) => {
     const target = Math.min(day + n, projectDuration);
     skipInProgressRef.current = true;
@@ -586,29 +597,46 @@ export default function Home() {
         const hasHigh = conflicts.some((c) => c.severity === "HIGH");
         if (hasHigh) triggerAlert();
 
-        if (data?.ai_analysis) {
-          const currentTypes = new Set(conflicts.map((c) => c.type).filter(Boolean));
-          const prevTypes = prevConflictTypesRef.current;
-          const hasNewType = [...currentTypes].some((t) => !prevTypes.has(t));
-          const hasHighConflict = conflicts.some((c) => c.severity === "HIGH");
-          const materialLow = Object.values(data.simulation?.materials || {}).some((m) => m.pct_remaining < 20);
-          const hasBreakdown = conflicts.some((c) => c.type === "equipment_risk");
+        if (target < projectDuration) {
+          if (data?.ai_analysis) {
+            const currentSigs = new Set(conflicts.map((c) => `${c.type}-${c.description || c.severity}`).filter(Boolean));
+            const prevSigs = prevConflictTypesRef.current;
+            const hasNewSig = [...currentSigs].some((s) => !prevSigs.has(s));
+            const materialLow = Object.values(data.simulation?.materials || {}).some((m) => m.pct_remaining < 20);
+            const hasBreakdown = conflicts.some((c) => c.type === "equipment_risk");
 
-          if (hasNewType || hasHighConflict || materialLow || hasBreakdown) {
-            setMessages((m) => [...m, { role: "ai", text: data.ai_analysis }]);
+            if (hasNewSig || materialLow || hasBreakdown) {
+              setMessages((m) => [...m, { role: "ai", text: data.ai_analysis }]);
+            }
+            prevConflictTypesRef.current = currentSigs;
           }
-          prevConflictTypesRef.current = currentTypes;
+
+          if (data.simulation?.phase && data.simulation.phase !== prevPhaseRef.current && prevPhaseRef.current !== "") {
+            setMessages((m) => [...m, {
+              role: "ai",
+              text: `**Day ${target} — Phase Transition:** Moving into ${data.simulation.phase} phase. Crew composition and equipment requirements are shifting.`,
+            }]);
+          }
+          prevPhaseRef.current = data.simulation?.phase || "";
         }
 
-        if (data.simulation?.phase && data.simulation.phase !== prevPhaseRef.current && prevPhaseRef.current !== "") {
-          setMessages((m) => [...m, {
-            role: "ai",
-            text: `**Day ${target} — Phase Transition:** Moving into ${data.simulation.phase} phase. Crew composition and equipment requirements are shifting.`,
-          }]);
+        if (target >= projectDuration && !debriefFiredRef.current) {
+          debriefFiredRef.current = true;
+          const newEntry = {
+            day: target,
+            conflictCount: (data?.conflicts || []).length,
+            totalWorkers: data?.simulation?.total_workers || 0,
+            materials: Object.values(data?.simulation?.materials || {}).map((m) => ({ name: m.name, pct: m.pct_remaining })),
+            costImpact: (data?.conflicts || []).reduce((s, c) => s + (c.cost_impact || 0), 0),
+            activeTasks: data?.simulation?.active_tasks,
+            scheduleRisk: data?.simulation?.schedule?.schedule_risk,
+          };
+          const combinedAnalytics = [...analytics, newEntry];
+          console.log('DEBRIEF FIRING', target, projectDuration);
+          fireDebrief(combinedAnalytics);
         }
-        prevPhaseRef.current = data.simulation?.phase || "";
       })
-      .catch(() => {})
+      .catch((err) => { console.error('Debrief failed:', err); })
       .finally(() => { skipInProgressRef.current = false; });
   };
 
@@ -1667,7 +1695,14 @@ export default function Home() {
 
           {/* Messages */}
           <div style={S.messageArea}>
-            {messages.map((msg, i) => (
+            {messages.map((msg, i) =>
+              msg.role === "divider" ? (
+                <div key={i} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 0" }}>
+                  <div style={{ flex: 1, height: 1, background: "linear-gradient(90deg, transparent, #6366F1, transparent)" }} />
+                  <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: 1.5, color: "#6366F1", textTransform: "uppercase", whiteSpace: "nowrap" }}>{msg.text}</span>
+                  <div style={{ flex: 1, height: 1, background: "linear-gradient(90deg, transparent, #6366F1, transparent)" }} />
+                </div>
+              ) : (
               <div
                 key={i}
                 style={{
@@ -1680,9 +1715,9 @@ export default function Home() {
                     maxWidth: "88%",
                     padding: "10px 14px",
                     borderRadius: 8,
-                    background: "rgba(255,255,255,0.03)",
-                    border: "1px solid rgba(255,255,255,0.06)",
-                    borderLeft: msg.role === "ai" ? "2px solid #6366F1" : "1px solid rgba(255,255,255,0.06)",
+                    background: msg.isDebrief ? "rgba(99,102,241,0.06)" : "rgba(255,255,255,0.03)",
+                    border: msg.isDebrief ? "1px solid rgba(99,102,241,0.2)" : "1px solid rgba(255,255,255,0.06)",
+                    borderLeft: msg.role === "ai" ? `2px solid ${msg.isDebrief ? "#818cf8" : "#6366F1"}` : "1px solid rgba(255,255,255,0.06)",
                     fontSize: 13,
                     lineHeight: 1.55,
                     color: "#e2e8f0",
@@ -1695,7 +1730,8 @@ export default function Home() {
                   )}
                 </div>
               </div>
-            ))}
+              )
+            )}
             <div ref={scrollRef} />
           </div>
 
@@ -3074,8 +3110,6 @@ function ConfigurePanel({ cells, projectDuration, onConfigSave, onValidationChan
     glaziers: "#ec4899", other: "#475569",
   };
 
-  const sortedMilestones = [...config.milestones].sort((a, b) => a.day - b.day);
-
   const validationIssues = useMemo(() => getValidationIssues(config, cells), [config, cells]);
   const errorCount = validationIssues.filter((i) => i.severity === "error").length;
   const warningCount = validationIssues.filter((i) => i.severity === "warning").length;
@@ -3407,49 +3441,46 @@ function ConfigurePanel({ cells, projectDuration, onConfigSave, onValidationChan
         {section === "Milestones" && (
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             <div style={{ fontSize: 13, fontWeight: 600, color: "#e2e8f0", marginBottom: 4 }}>Project Milestones</div>
-            {sortedMilestones.map((ms) => {
-              const realIdx = config.milestones.findIndex((m) => m.id === ms.id);
-              return (
+            {config.milestones.map((ms, idx) => (
                 <div key={ms.id} style={{ ...cfgCard, borderLeft: `2px solid ${milestoneColor(ms.type)}`, position: "relative" }}>
-                  <button onClick={() => removeMilestone(realIdx)} style={{
+                  <button onClick={() => removeMilestone(idx)} style={{
                     position: "absolute", top: 8, right: 8, background: "none", border: "none",
                     color: "#475569", cursor: "pointer", fontSize: 14, fontFamily: "inherit",
                   }}>✕</button>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
                     <div>
                       <div style={cfgLabel}>Name</div>
-                      <input value={ms.name} onChange={(e) => updateMilestone(realIdx, "name", e.target.value)}
+                      <input value={ms.name} onChange={(e) => updateMilestone(idx, "name", e.target.value)}
                         placeholder="Milestone name" style={{ ...cfgInput, width: "100%" }} />
                     </div>
                     <div>
                       <div style={cfgLabel}>Day</div>
                       <input type="number" min={1} max={projectDuration} value={ms.day}
-                        onChange={(e) => updateMilestone(realIdx, "day", Number(e.target.value))}
+                        onChange={(e) => updateMilestone(idx, "day", Number(e.target.value))}
                         style={{ ...cfgInput, width: "100%" }} />
                     </div>
                     <div>
                       <div style={cfgLabel}>Type</div>
-                      <select value={ms.type} onChange={(e) => updateMilestone(realIdx, "type", e.target.value)}
+                      <select value={ms.type} onChange={(e) => updateMilestone(idx, "type", e.target.value)}
                         style={{ ...cfgInput, width: "100%" }}>
                         {MILESTONE_TYPES.map((t) => <option key={t}>{t}</option>)}
                       </select>
                     </div>
                     <div>
                       <div style={cfgLabel}>Impact</div>
-                      <select value={ms.impact} onChange={(e) => updateMilestone(realIdx, "impact", e.target.value)}
+                      <select value={ms.impact} onChange={(e) => updateMilestone(idx, "impact", e.target.value)}
                         style={{ ...cfgInput, width: "100%" }}>
                         {MILESTONE_IMPACTS.map((imp) => <option key={imp}>{imp}</option>)}
                       </select>
                     </div>
                     <div style={{ gridColumn: "span 2" }}>
                       <div style={cfgLabel}>Notes</div>
-                      <textarea value={ms.notes} onChange={(e) => updateMilestone(realIdx, "notes", e.target.value)}
+                      <textarea value={ms.notes} onChange={(e) => updateMilestone(idx, "notes", e.target.value)}
                         rows={2} style={{ ...cfgInput, width: "100%", height: "auto", padding: 8, resize: "vertical" }} />
                     </div>
                   </div>
                 </div>
-              );
-            })}
+            ))}
             <button onClick={addMilestone} style={{
               height: 36, borderRadius: 6, border: "1px dashed rgba(255,255,255,0.08)", background: "transparent",
               color: "#8B8FA3", fontSize: 12, cursor: "pointer", fontFamily: "inherit",
@@ -3769,6 +3800,7 @@ const S = {
     padding: 0,
     gap: 1,
     flexShrink: 0,
+    marginRight: 16,
   },
   durationBtn: {
     fontSize: 11,
@@ -3794,6 +3826,7 @@ const S = {
     gap: 4,
     position: "relative",
     minWidth: 0,
+    marginLeft: 8,
   },
   phaseLabels: {
     position: "relative",
