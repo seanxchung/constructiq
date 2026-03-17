@@ -7,19 +7,19 @@ import { supabase } from "./auth";
 /* ───────────────────── constants ───────────────────── */
 
 const ZONES = [
-  { id: "crane", label: "Crane", emoji: "🏗️", color: "#eab308", bg: "#eab30815" },
-  { id: "workers", label: "Workers", emoji: "👷", color: "#3b82f6", bg: "#3b82f615" },
-  { id: "materials", label: "Materials", emoji: "📦", color: "#f97316", bg: "#f9731615" },
-  { id: "road", label: "Access Road", emoji: "🛣️", color: "#64748b", bg: "#64748b15" },
-  { id: "building", label: "Building", emoji: "🏢", color: "#22c55e", bg: "#22c55e15" },
-  { id: "office", label: "Site Office", emoji: "🏠", color: "#8b5cf6", bg: "#8b5cf615" },
-  { id: "parking", label: "Parking", emoji: "🚗", color: "#64748b", bg: "#64748b15" },
-  { id: "fence", label: "Fence/Boundary", emoji: "🚧", color: "#f59e0b", bg: "#f59e0b15" },
-  { id: "manlift", label: "Man Lift", emoji: "🔧", color: "#06b6d4", bg: "#06b6d415" },
-  { id: "delivery", label: "Delivery Zone", emoji: "🚛", color: "#84cc16", bg: "#84cc1615" },
-  { id: "boundary", label: "Site Boundary", emoji: "🚫", color: "#ef4444", bg: "#ef444415" },
-  { id: "truck_staging", label: "Truck Staging", emoji: "🅿️", color: "#84cc16", bg: "#84cc1615" },
-  { id: "eraser", label: "Eraser", emoji: "🗑️", color: "#ef4444", bg: "#ef444415" },
+  { id: "crane", label: "Crane", code: "CR", color: "#eab308", bg: "#eab30815" },
+  { id: "workers", label: "Workers", code: "WK", color: "#3b82f6", bg: "#3b82f615" },
+  { id: "materials", label: "Materials", code: "MT", color: "#f97316", bg: "#f9731615" },
+  { id: "road", label: "Access Road", code: "RD", color: "#64748b", bg: "#64748b15" },
+  { id: "building", label: "Building", code: "BD", color: "#22c55e", bg: "#22c55e15" },
+  { id: "office", label: "Site Office", code: "OF", color: "#8b5cf6", bg: "#8b5cf615" },
+  { id: "parking", label: "Parking", code: "PK", color: "#64748b", bg: "#64748b15" },
+  { id: "fence", label: "Fence/Boundary", code: "FC", color: "#f59e0b", bg: "#f59e0b15" },
+  { id: "manlift", label: "Man Lift", code: "ML", color: "#06b6d4", bg: "#06b6d415" },
+  { id: "delivery", label: "Delivery Zone", code: "DZ", color: "#84cc16", bg: "#84cc1615" },
+  { id: "boundary", label: "Site Boundary", code: "SB", color: "#ef4444", bg: "#ef444415" },
+  { id: "truck_staging", label: "Truck Staging", code: "TS", color: "#84cc16", bg: "#84cc1615" },
+  { id: "eraser", label: "Eraser", code: "", color: "#ef4444", bg: "#ef444415" },
 ];
 
 const ZONE_SIZES = {
@@ -61,14 +61,37 @@ const buildGanttPhases = (totalDays) => {
 };
 
 const INITIAL_MESSAGES = [
-  { role: "ai", text: "Good morning. I'm Sean Chung, your AI construction advisor. I've analyzed the site geotechnical report and I'm ready to help you optimize this build from day one." },
+  { role: "ai", text: "Good morning. I'm Mike Callahan, your AI construction advisor. I've analyzed the site geotechnical report and I'm ready to help you optimize this build from day one." },
   { role: "ai", text: "Recommendation: Start by laying Access Roads along the perimeter for logistics flow, then position Cranes for maximum lift coverage. I'll flag conflicts in real-time." },
 ];
 
 const API_BASE = "http://localhost:8000";
 
+const DEFAULT_CONFIG = {
+  phases: [
+    { id: "site-prep", name: "Site Preparation", startDay: 1, endDay: 10, color: "#64748b" },
+    { id: "foundation", name: "Foundation", startDay: 11, endDay: 30, color: "#3b82f6" },
+    { id: "structural", name: "Structural", startDay: 31, endDay: 60, color: "#8b5cf6" },
+    { id: "mep", name: "MEP", startDay: 61, endDay: 75, color: "#f59e0b" },
+    { id: "finishing", name: "Finishing", startDay: 76, endDay: 88, color: "#22c55e" },
+    { id: "closeout", name: "Closeout", startDay: 89, endDay: 90, color: "#ef4444" },
+  ],
+  cranes: [],
+  deliveries: [],
+  workforce: {
+    "site-prep": { total: 10, laborers: 8, operators: 2 },
+    foundation: { total: 25, laborers: 12, carpenters: 8, ironworkers: 3, operators: 2 },
+    structural: { total: 55, laborers: 10, carpenters: 5, ironworkers: 30, operators: 10 },
+    mep: { total: 40, laborers: 5, electricians: 15, plumbers: 15, operators: 5 },
+    finishing: { total: 25, laborers: 8, carpenters: 8, painters: 7, operators: 2 },
+    closeout: { total: 10, laborers: 8, operators: 2 },
+  },
+  equipment: [],
+  milestones: [],
+};
+
 const BUILDING_STAGES = [
-  { maxPct: 15, bg: "#1e293b", border: "#334155", dashed: true, label: "Excavation" },
+  { maxPct: 15, bg: "#1A1D2B", border: "#4A4E63", dashed: true, label: "Excavation" },
   { maxPct: 30, bg: "#92400e20", border: "#92400e", dashed: false, label: "Foundation" },
   { maxPct: 55, bg: "#1e3a5f", border: "#3b82f6", dashed: false, label: "Structure" },
   { maxPct: 75, bg: "#78350f20", border: "#f59e0b", dashed: false, label: "MEP" },
@@ -139,18 +162,18 @@ const ENTRY_ARROWS = { right: "\u25b8", left: "\u25c2", down: "\u25be", up: "\u2
 
 const MD_COMPONENTS = {
   p: ({ children }) => <p style={{ margin: "4px 0" }}>{children}</p>,
-  strong: ({ children }) => <strong style={{ fontWeight: 600, color: "#f1f5f9" }}>{children}</strong>,
-  em: ({ children }) => <em style={{ fontStyle: "italic", color: "#cbd5e1" }}>{children}</em>,
+  strong: ({ children }) => <strong style={{ fontWeight: 600, color: "#e2e8f0" }}>{children}</strong>,
+  em: ({ children }) => <em style={{ fontStyle: "italic", color: "#b0b4c3" }}>{children}</em>,
   ul: ({ children }) => <ul style={{ margin: "4px 0", paddingLeft: 18 }}>{children}</ul>,
   ol: ({ children }) => <ol style={{ margin: "4px 0", paddingLeft: 18 }}>{children}</ol>,
   li: ({ children }) => <li style={{ marginBottom: 2 }}>{children}</li>,
   code: ({ children }) => (
-    <code style={{ background: "#334155", padding: "1px 5px", borderRadius: 4, fontSize: 12, fontFamily: "monospace" }}>
+    <code style={{ background: "rgba(255,255,255,0.06)", padding: "1px 5px", borderRadius: 4, fontSize: 12, fontFamily: "monospace" }}>
       {children}
     </code>
   ),
-  h3: ({ children }) => <h3 style={{ fontSize: 14, fontWeight: 700, color: "#f1f5f9", margin: "6px 0 2px" }}>{children}</h3>,
-  h4: ({ children }) => <h4 style={{ fontSize: 13, fontWeight: 600, color: "#f1f5f9", margin: "4px 0 2px" }}>{children}</h4>,
+  h3: ({ children }) => <h3 style={{ fontSize: 14, fontWeight: 700, color: "#e2e8f0", margin: "6px 0 2px" }}>{children}</h3>,
+  h4: ({ children }) => <h4 style={{ fontSize: 13, fontWeight: 600, color: "#e2e8f0", margin: "4px 0 2px" }}>{children}</h4>,
 };
 
 /* ───────────────────── component ───────────────────── */
@@ -181,27 +204,16 @@ export default function Home() {
   const [projectNameInput, setProjectNameInput] = useState("");
   const [optimizerWorkers, setOptimizerWorkers] = useState(0);
   const [projectConfig, setProjectConfig] = useState(null);
-  const [savedConfig, setSavedConfig] = useState({
-    phases: [
-      { id: "site-prep", name: "Site Preparation", startDay: 1, endDay: 10, color: "#64748b" },
-      { id: "foundation", name: "Foundation", startDay: 11, endDay: 30, color: "#3b82f6" },
-      { id: "structural", name: "Structural", startDay: 31, endDay: 60, color: "#8b5cf6" },
-      { id: "mep", name: "MEP", startDay: 61, endDay: 75, color: "#f59e0b" },
-      { id: "finishing", name: "Finishing", startDay: 76, endDay: 88, color: "#22c55e" },
-      { id: "closeout", name: "Closeout", startDay: 89, endDay: 90, color: "#ef4444" },
-    ],
-    cranes: [],
-    deliveries: [],
-    workforce: {
-      "site-prep": { total: 10, laborers: 8, operators: 2 },
-      foundation: { total: 25, laborers: 12, carpenters: 8, ironworkers: 3, operators: 2 },
-      structural: { total: 55, laborers: 10, carpenters: 5, ironworkers: 30, operators: 10 },
-      mep: { total: 40, laborers: 5, electricians: 15, plumbers: 15, operators: 5 },
-      finishing: { total: 25, laborers: 8, carpenters: 8, painters: 7, operators: 2 },
-      closeout: { total: 10, laborers: 8, operators: 2 },
-    },
-    equipment: [],
-    milestones: [],
+  const [savedConfig, setSavedConfig] = useState(() => {
+    if (typeof window === "undefined") return DEFAULT_CONFIG;
+    try {
+      const cached = localStorage.getItem("constructiq_config");
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (parsed && parsed.phases) return parsed;
+      }
+    } catch {}
+    return DEFAULT_CONFIG;
   });
   const [configErrorCount, setConfigErrorCount] = useState(0);
   const [activeTrucks, setActiveTrucks] = useState([]);
@@ -238,6 +250,10 @@ export default function Home() {
   useEffect(() => {
     scrollRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
+  useEffect(() => {
+    setProjectConfig(savedConfig);
+    try { localStorage.setItem("constructiq_config", JSON.stringify(savedConfig)); } catch {}
+  }, [savedConfig]);
 
   useEffect(() => {
     if (!isPlaying) return;
@@ -291,7 +307,7 @@ export default function Home() {
           const materialLow = Object.values(data.simulation?.materials || {}).some((m) => m.pct_remaining < 20);
           const hasBreakdown = conflicts.some((c) => c.type === "equipment_risk");
 
-          if (hasNewType || hasHighConflict || materialLow || hasBreakdown) {
+          if (hasNewType || materialLow || hasBreakdown) {
             setMessages((m) => [...m, { role: "ai", text: `**Day ${day}:** ${data.ai_analysis}` }]);
           }
           prevConflictTypesRef.current = currentTypes;
@@ -310,16 +326,14 @@ export default function Home() {
   }, [day, isPlaying, projectDuration]);
 
   useEffect(() => {
-    if (day < projectDuration || analytics.length === 0 || isPlaying) return;
-    if (debriefFiredRef.current) return;
+    if (day < projectDuration || debriefFiredRef.current) return;
     debriefFiredRef.current = true;
 
     fetch(`${API_BASE}/api/ai/chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        message: `Give me a complete project debrief for this ${projectDuration}-day simulation`,
-        day,
+        message: `The ${projectDuration}-day scheduled project duration has ended. Based on the conflicts and cascade delays detected, write a project debrief. State whether the project likely finished on time or is projected to overrun, and by how many days. Total conflicts: ${analytics.reduce((s,a) => s + a.conflictCount, 0)}. Peak workers: ${Math.max(0, ...analytics.map(a => a.totalWorkers))}. Total cost exposure: $${analytics.reduce((s,a) => s + a.costImpact, 0).toLocaleString()}. Top conflict types: ${[...new Set(simConflicts.map(c => c.type))].join(', ') || 'none'}. Give a realistic retrospective on what drove risk and what should change next time.`,
         zones: buildZones(),
         project_duration: projectDuration,
         current_conflicts: simConflicts,
@@ -399,13 +413,13 @@ export default function Home() {
     return (
       <div style={{
         height: "100vh", display: "flex", alignItems: "center", justifyContent: "center",
-        background: "#060a14", flexDirection: "column", gap: 16,
+        background: "#0F1117", flexDirection: "column", gap: 16,
       }}>
         <div style={{
-          width: 40, height: 40, border: "3px solid #1e293b", borderTopColor: "#3b82f6",
+          width: 40, height: 40, border: "3px solid rgba(255,255,255,0.06)", borderTopColor: "#6366F1",
           borderRadius: "50%", animation: "spin 0.8s linear infinite",
         }} />
-        <span style={{ fontSize: 14, color: "#64748b", fontWeight: 500 }}>Loading ConstructIQ...</span>
+        <span style={{ fontSize: 14, color: "#8B8FA3", fontWeight: 500 }}>Loading ConstructIQ...</span>
       </div>
     );
   }
@@ -750,7 +764,7 @@ export default function Home() {
       const res = await fetch(`${API_BASE}/api/projects/save`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, zones: buildZones(), project_duration: projectDuration }),
+        body: JSON.stringify({ name, zones: buildZones(), project_duration: projectDuration, config: savedConfig }),
       });
       if (res.ok) {
         setProjectNameInput("");
@@ -790,6 +804,11 @@ export default function Home() {
       });
       setCells(next);
       if (data.project_duration) setProjectDuration(data.project_duration);
+      const loadedConfig = data.config && typeof data.config === "object" && data.config.phases
+        ? data.config
+        : DEFAULT_CONFIG;
+      setSavedConfig(loadedConfig);
+      setProjectConfig(loadedConfig);
       setIsPlaying(false);
       setDay(1);
       setAnalytics([]);
@@ -800,7 +819,7 @@ export default function Home() {
       setActiveTrucks([]);
       setMessages((m) => [
         ...m,
-        { role: "ai", text: `Loaded project "${data.name}". ${(data.zones || []).length} zones restored. Ready to simulate.` },
+        { role: "ai", text: `Loaded project "${data.name}". ${(data.zones || []).length} zones restored.${data.config ? " Configuration restored." : ""} Ready to simulate.` },
       ]);
     } catch {}
   };
@@ -906,7 +925,7 @@ export default function Home() {
         <div style={S.navLeft}>
           <div style={S.logoBox}>C</div>
           <span style={S.logoText}>ConstructIQ</span>
-          <span style={S.badge}>BETA</span>
+          <span style={S.badge}>Beta</span>
         </div>
         <div style={S.navCenter}>
           <NavTab label="SITE PLAN" active={activeTab === "site"} onClick={() => setActiveTab("site")} />
@@ -915,17 +934,24 @@ export default function Home() {
           <NavTab label="CONFIGURE" active={activeTab === "configure"} onClick={() => setActiveTab("configure")} badge={configErrorCount} />
         </div>
         <div style={S.navRight}>
-          <div style={S.liveGroup}>
-            <div style={S.liveDot} />
-            <span style={{ fontSize: 12, color: "#64748b" }}>Live Simulation</span>
-          </div>
-          <div style={S.navDivider} />
-          <span style={{ fontSize: 12, color: "#64748b", maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          <span style={{ fontSize: 12, color: "#8B8FA3", maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
             {user.email}
           </span>
-          <button onClick={signOut} style={S.logoutBtn}>
-            Sign Out
-          </button>
+          <div style={{ position: "relative" }}>
+            <div
+              onClick={signOut}
+              style={{
+                width: 30, height: 30, borderRadius: "50%",
+                background: "rgba(99,102,241,0.15)", border: "1px solid rgba(99,102,241,0.2)",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                fontSize: 11, fontWeight: 600, color: "#6366F1", cursor: "pointer",
+                transition: "all 0.15s",
+              }}
+              title="Sign out"
+            >
+              {(user.email || "U")[0].toUpperCase()}
+            </div>
+          </div>
         </div>
       </nav>
 
@@ -936,9 +962,8 @@ export default function Home() {
           {activeTab === "site" ? (
           <>
           {/* Zone Toolbar */}
-          <div style={{ ...S.toolbar, flexWrap: "wrap", rowGap: 6 }}>
-            <span style={{ ...S.sectionLabel, width: "100%", marginBottom: -2 }}>ZONES</span>
-            {ZONES.map((z) => {
+          <div style={{ ...S.toolbar, flexWrap: "wrap", rowGap: 4 }}>
+            {ZONES.filter(z => z.id !== "eraser").map((z) => {
               const active = activeTool === z.id;
               return (
                 <button
@@ -946,59 +971,52 @@ export default function Home() {
                   onClick={() => setActiveTool(active ? null : z.id)}
                   style={{
                     ...S.toolBtn,
-                    borderColor: active ? z.color : "#1e293b",
-                    background: active ? z.bg : "transparent",
-                    color: active ? z.color : "#94a3b8",
-                    boxShadow: active ? `0 0 16px ${z.bg}` : "none",
+                    color: active ? "#e2e8f0" : "#8B8FA3",
+                    background: active ? "rgba(255,255,255,0.04)" : "transparent",
                   }}
                 >
-                  <span style={{ fontSize: 15 }}>{z.emoji}</span>
+                  <span style={{
+                    width: 8, height: 8, borderRadius: "50%", background: z.color,
+                    opacity: active ? 1 : 0.6, flexShrink: 0,
+                    transition: "opacity 0.15s",
+                  }} />
                   {z.label}
                 </button>
               );
             })}
-            <div style={{ width: 1, height: 24, background: "#1e293b", margin: "0 4px" }} />
+            <div style={{ width: 1, height: 20, background: "rgba(255,255,255,0.06)", margin: "0 4px" }} />
             <button
-              onClick={clearSite}
+              onClick={() => setActiveTool(activeTool === "eraser" ? null : "eraser")}
               style={{
                 ...S.toolBtn,
-                borderColor: "#1e293b",
-                background: "transparent",
-                color: "#ef4444",
+                color: activeTool === "eraser" ? "#e2e8f0" : "#8B8FA3",
+                background: activeTool === "eraser" ? "rgba(255,255,255,0.04)" : "transparent",
               }}
             >
-              ✕ Clear Site
+              Eraser
+            </button>
+            <button
+              onClick={clearSite}
+              style={{ ...S.toolBtn, color: "#8B8FA3" }}
+            >
+              Clear Site
             </button>
             <button
               onClick={() => { setOptimizerOpen(true); setOptimizerResult(null); }}
-              style={{
-                ...S.toolBtn,
-                borderColor: "#8b5cf6",
-                background: "#8b5cf615",
-                color: "#a78bfa",
-                boxShadow: "0 0 12px #8b5cf615",
-              }}
+              style={{ ...S.toolBtn, color: "#8B8FA3" }}
             >
-              <span style={{ fontSize: 15 }}>{"✨"}</span>
               AI Optimize
             </button>
             <button
               onClick={() => setProjectsModalOpen(true)}
-              style={{
-                ...S.toolBtn,
-                borderColor: "#3b82f6",
-                background: "#3b82f615",
-                color: "#60a5fa",
-                boxShadow: "0 0 12px #3b82f615",
-              }}
+              style={{ ...S.toolBtn, color: "#8B8FA3" }}
             >
-              <span style={{ fontSize: 15 }}>{"\uD83D\uDCC1"}</span>
               Projects
             </button>
             <div style={{ flex: 1 }} />
             <div style={S.zoneCounter}>
               {placedCount > 0 && (
-                <span style={{ fontSize: 12, color: "#475569" }}>
+                <span style={{ fontSize: 11, color: "#4A4E63" }}>
                   {placedCount} zone{placedCount !== 1 ? "s" : ""} placed
                 </span>
               )}
@@ -1009,11 +1027,11 @@ export default function Home() {
           <div style={S.gridArea}>
             {/* Site Plan Header */}
             <div style={S.gridHeader}>
-              <span style={{ fontSize: 11, fontWeight: 600, color: "#334155", letterSpacing: "0.1em" }}>
-                SITE PLAN — {GRID}×{GRID} GRID
+              <span style={{ fontSize: 10, fontWeight: 500, color: "#4A4E63", letterSpacing: "0.08em" }}>
+                SITE PLAN — {GRID}x{GRID} GRID
               </span>
-              <span style={{ fontSize: 11, color: "#334155" }}>
-                Phase: <span style={{ color: "#60a5fa" }}>{currentPhase}</span>
+              <span style={{ fontSize: 10, color: "#4A4E63" }}>
+                Phase: <span style={{ color: "#8B8FA3" }}>{currentPhase}</span>
               </span>
             </div>
 
@@ -1046,8 +1064,8 @@ export default function Home() {
                     display: "grid",
                     gridTemplateColumns: `repeat(${GRID}, 1fr)`,
                     width: GRID * 34,
-                    border: "1px solid #1e293b",
-                    borderRadius: 8,
+                    border: "1px solid rgba(255,255,255,0.04)",
+                    borderRadius: 6,
                     overflow: "hidden",
                   }}
                 >
@@ -1080,6 +1098,7 @@ export default function Home() {
 
                     if (cell && cell.ref !== undefined) {
                       const originZone = ZONES.find((z) => z.id === cell.id);
+                      const zClr = originZone?.color || "#64748b";
                       return (
                         <div
                           key={i}
@@ -1089,18 +1108,19 @@ export default function Home() {
                           style={{
                             width: 34,
                             height: 34,
-                            background: (originZone?.color || "#64748b") + "1a",
-                            borderRight: "1px solid #1e293b30",
-                            borderBottom: "1px solid #1e293b30",
+                            background: zClr + "12",
+                            borderRight: "1px solid rgba(255,255,255,0.04)",
+                            borderBottom: "1px solid rgba(255,255,255,0.04)",
                             cursor: activeTool ? "crosshair" : "default",
                             transition: "background 0.15s",
                             position: "relative",
+                            boxShadow: `inset 0 0 0 1px ${zClr}1a`,
                           }}
                         >
                           {hfp && (
                             <div style={{
                               position: "absolute", inset: 0,
-                              background: hfp.valid ? hfp.color + "26" : "#ef444426",
+                              background: hfp.valid ? hfp.color + "1a" : "#ef44441a",
                               pointerEvents: "none", zIndex: 3,
                             }} />
                           )}
@@ -1111,9 +1131,9 @@ export default function Home() {
                     const isHover = hoveredCell === i && activeTool && !cell;
                     const hoverZone = isHover ? ZONES.find((z) => z.id === activeTool) : null;
 
-                    let cellBg = cell ? cell.bg : "#0c1221";
-                    let cellBorderR = "1px solid #1e293b30";
-                    let cellBorderB = "1px solid #1e293b30";
+                    let cellBg = cell ? (cell.color + "12") : "#161822";
+                    let cellBorderR = "1px solid rgba(255,255,255,0.04)";
+                    let cellBorderB = "1px solid rgba(255,255,255,0.04)";
                     let cellBorderL = undefined;
                     let cellBorderT = undefined;
                     let cellAnim = undefined;
@@ -1122,19 +1142,17 @@ export default function Home() {
 
                     if (cell?.id === "building") {
                       const stage = getBuildingStage(buildPct);
-                      cellBg = stage.bg;
-                      const bdr = `2px ${stage.dashed ? "dashed" : "solid"} ${stage.border}`;
-                      cellBorderR = bdr;
-                      cellBorderB = bdr;
-                      cellBoxShadow = `0 0 12px ${stage.border}40`;
+                      cellBg = cell.color + "12";
+                      cellBorderR = `1px solid ${cell.color}30`;
+                      cellBorderB = `1px solid ${cell.color}30`;
                       content = (
                         <>
-                          <span style={{ fontSize: 15, lineHeight: 1 }}>{cell.emoji}</span>
-                          <span style={{ fontSize: 8, fontWeight: 700, color: stage.border, lineHeight: 1, marginTop: 1 }}>
+                          <span style={{ fontSize: 9, fontWeight: 700, color: cell.color + "cc", lineHeight: 1, letterSpacing: "0.04em", fontFamily: "monospace" }}>BD</span>
+                          <span style={{ fontSize: 7, fontWeight: 600, color: stage.border, lineHeight: 1, marginTop: 2, opacity: 0.7 }}>
                             {stage.label}
                           </span>
-                          <div style={{ position: "absolute", bottom: 3, left: 5, right: 5, height: 2, background: "#0c122180", borderRadius: 1 }}>
-                            <div style={{ width: `${Math.min(buildPct, 100)}%`, height: "100%", background: stage.border, borderRadius: 1, transition: "width 0.3s" }} />
+                          <div style={{ position: "absolute", bottom: 3, left: 5, right: 5, height: 2, background: "rgba(255,255,255,0.04)", borderRadius: 1 }}>
+                            <div style={{ width: `${Math.min(buildPct, 100)}%`, height: "100%", background: stage.border, borderRadius: 1, transition: "width 0.3s", opacity: 0.7 }} />
                           </div>
                         </>
                       );
@@ -1144,19 +1162,20 @@ export default function Home() {
                       const avgPct = mats.length > 0 ? mats.reduce((s, m) => s + m.pct_remaining, 0) / mats.length : 100;
                       const matLow = mats.some((m) => m.pct_remaining < 20);
                       const barClr = avgPct > 50 ? "#22c55e" : avgPct > 20 ? "#eab308" : "#ef4444";
+                      cellBg = cell.color + "12";
+                      cellBorderR = `1px solid ${cell.color}30`;
+                      cellBorderB = `1px solid ${cell.color}30`;
                       if (matLow) {
-                        cellBorderR = "1.5px solid #ef4444";
-                        cellBorderB = cellBorderR;
                         cellAnim = "pulse-red 1.5s infinite";
                       }
                       content = (
                         <>
-                          <span style={{ fontSize: 15, lineHeight: 1 }}>{cell.emoji}</span>
+                          <span style={{ fontSize: 9, fontWeight: 700, color: cell.color + "cc", lineHeight: 1, letterSpacing: "0.04em", fontFamily: "monospace" }}>MT</span>
                           <span style={{ fontSize: 7, color: barClr, fontWeight: 600, lineHeight: 1, marginTop: 1 }}>
                             {Math.round(avgPct)}%
                           </span>
-                          <div style={{ position: "absolute", bottom: 3, left: 5, right: 5, height: 5, background: "#1e293b", borderRadius: 2.5 }}>
-                            <div style={{ width: `${avgPct}%`, height: "100%", background: barClr, borderRadius: 2.5, transition: avgPct < 50 ? "width 0.5s ease, background 0.5s ease" : "width 0.3s", ...(avgPct < 20 ? { boxShadow: "0 0 6px #ef4444" } : {}) }} />
+                          <div style={{ position: "absolute", bottom: 3, left: 5, right: 5, height: 3, background: "rgba(255,255,255,0.04)", borderRadius: 1.5 }}>
+                            <div style={{ width: `${avgPct}%`, height: "100%", background: barClr, borderRadius: 1.5, transition: avgPct < 50 ? "width 0.5s ease, background 0.5s ease" : "width 0.3s", opacity: 0.7 }} />
                           </div>
                         </>
                       );
@@ -1164,33 +1183,31 @@ export default function Home() {
                     } else if (cell?.id === "workers") {
                       const numWZ = cells.filter((c) => c?.isOrigin && c.id === "workers").length;
                       const wCount = simulationState ? (workersByZone[simZoneId('workers', cx, cy)]?.count || 0) : (numWZ > 0 && optimizerWorkers > 0 ? Math.round(optimizerWorkers / numWZ) : 25);
-                      const dotColor = simulationState ? '#60a5fa' : '#3b82f6';
-                      const maxDots = 6;
-                      const dotsToShow = Math.min(wCount, maxDots);
+                      cellBg = cell.color + "12";
+                      cellBorderR = `1px solid ${cell.color}30`;
+                      cellBorderB = `1px solid ${cell.color}30`;
                       content = (
                         <>
-                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 2, justifyContent: 'center', padding: 2 }}>
-                            {Array.from({ length: dotsToShow }).map((_, di) => (
-                              <div key={di} style={{ width: 4, height: 4, borderRadius: '50%', background: dotColor }} />
-                            ))}
-                          </div>
-                          <span style={{ fontSize: 7, fontWeight: 800, color: dotColor, lineHeight: 1 }}>{wCount}</span>
+                          <span style={{ fontSize: 9, fontWeight: 700, color: cell.color + "cc", lineHeight: 1, letterSpacing: "0.04em", fontFamily: "monospace" }}>WK</span>
+                          <span style={{ fontSize: 7, fontWeight: 700, color: cell.color + "cc", lineHeight: 1, marginTop: 1 }}>{wCount}</span>
                         </>
                       );
 
                     } else if (cell?.id === "crane") {
                       const craneData = craneByPos[`${cx}-${cy}`];
                       const isBroken = craneData?.breakdown || false;
+                      cellBg = cell.color + "12";
+                      cellBorderR = `1px solid ${cell.color}30`;
+                      cellBorderB = `1px solid ${cell.color}30`;
                       content = (
                         <>
-                          <span style={{ fontSize: 17, lineHeight: 1 }}>{cell.emoji}</span>
-                          <div style={{ width: 8, height: 2, borderRadius: 1, background: isBroken ? "#ef4444" : cell.color, marginTop: 2, opacity: 0.5 }} />
+                          <span style={{ fontSize: 9, fontWeight: 700, color: isBroken ? "#ef4444cc" : cell.color + "cc", lineHeight: 1, letterSpacing: "0.04em", fontFamily: "monospace" }}>CR</span>
                           {isBroken && (
                             <div style={{
-                              position: "absolute", inset: 0, background: "#ef444435",
+                              position: "absolute", inset: 0, background: "#ef444418",
                               display: "flex", alignItems: "center", justifyContent: "center",
                             }}>
-                              <span style={{ color: "#ef4444", fontWeight: 900, fontSize: 20, lineHeight: 1, textShadow: "0 0 6px #ef444480" }}>{"\u2715"}</span>
+                              <span style={{ color: "#ef4444", fontWeight: 700, fontSize: 16, lineHeight: 1 }}>{"\u2715"}</span>
                             </div>
                           )}
                         </>
@@ -1204,12 +1221,11 @@ export default function Home() {
                         ? cx === 0 ? "right" : cx === GRID - 1 ? "left" : cy === 0 ? "down" : "up"
                         : null;
 
-                      cellBg = isBlocked ? "#ef444420" : isEdge ? "#334155" : "#293548";
+                      cellBg = isBlocked ? "#ef444415" : cell.color + "18";
+                      cellBorderR = `1px solid ${cell.color}25`;
+                      cellBorderB = `1px solid ${cell.color}25`;
                       if (isBlocked) {
-                        cellBorderR = "1.5px solid #ef4444";
-                        cellBorderB = cellBorderR;
-                      } else if (isEdge) {
-                        cellBorderR = "1px solid #475569";
+                        cellBorderR = "1px solid #ef444440";
                         cellBorderB = cellBorderR;
                       }
                       if (hasActiveDelivery && !isBlocked) {
@@ -1221,7 +1237,7 @@ export default function Home() {
                             <div style={{
                               position: "absolute", left: "50%", top: adj.up ? 0 : "30%",
                               bottom: adj.down ? 0 : "30%", width: 0,
-                              borderLeft: "1px dashed #94a3b830",
+                              borderLeft: "1px dashed rgba(255,255,255,0.06)",
                               transform: "translateX(-0.5px)", pointerEvents: "none",
                             }} />
                           )}
@@ -1229,24 +1245,24 @@ export default function Home() {
                             <div style={{
                               position: "absolute", top: "50%", left: adj.left ? 0 : "30%",
                               right: adj.right ? 0 : "30%", height: 0,
-                              borderTop: "1px dashed #94a3b830",
+                              borderTop: "1px dashed rgba(255,255,255,0.06)",
                               transform: "translateY(-0.5px)", pointerEvents: "none",
                             }} />
                           )}
                           {isEdge && entryDir ? (
-                            <span style={{ fontSize: 14, color: "#94a3b8", fontWeight: 700, lineHeight: 1, zIndex: 1 }}>
+                            <span style={{ fontSize: 12, color: "#8B8FA3", fontWeight: 600, lineHeight: 1, zIndex: 1 }}>
                               {ENTRY_ARROWS[entryDir]}
                             </span>
                           ) : (
-                            <span style={{ fontSize: 12, lineHeight: 1, opacity: 0.35, zIndex: 1 }}>{cell.emoji}</span>
+                            <span style={{ fontSize: 9, fontWeight: 700, color: cell.color + "80", lineHeight: 1, zIndex: 1, fontFamily: "monospace" }}>RD</span>
                           )}
                           {isBlocked && (
                             <div style={{
                               position: "absolute", inset: 0, display: "flex",
                               alignItems: "center", justifyContent: "center",
-                              background: "#ef444418", zIndex: 2,
+                              background: "#ef444412", zIndex: 2,
                             }}>
-                              <span style={{ fontSize: 14, lineHeight: 1 }}>{"\ud83d\udeab"}</span>
+                              <span style={{ color: "#ef4444", fontSize: 12, fontWeight: 700, lineHeight: 1 }}>{"\u2715"}</span>
                             </div>
                           )}
                         </>
@@ -1255,16 +1271,16 @@ export default function Home() {
                     } else if (cell?.id === "truck_staging") {
                       const trucksHere = stagedTruckCount;
                       const active = trucksHere > 0;
-                      const borderClr = active ? "#84cc16" : "#64748b";
-                      cellBorderR = `1.5px ${active ? "solid" : "dashed"} ${borderClr}`;
-                      cellBorderB = cellBorderR;
+                      cellBg = cell.color + "12";
+                      cellBorderR = `1px solid ${cell.color}30`;
+                      cellBorderB = `1px solid ${cell.color}30`;
                       if (active) cellAnim = "pulse-amber 2.5s infinite";
                       content = (
                         <>
-                          <span style={{ fontSize: 15, lineHeight: 1 }}>{cell.emoji}</span>
+                          <span style={{ fontSize: 9, fontWeight: 700, color: cell.color + "cc", lineHeight: 1, letterSpacing: "0.04em", fontFamily: "monospace" }}>TS</span>
                           <span style={{
-                            fontSize: 8, fontWeight: 800, lineHeight: 1, marginTop: 1,
-                            color: active ? "#84cc16" : "#64748b",
+                            fontSize: 7, fontWeight: 700, lineHeight: 1, marginTop: 1,
+                            color: active ? "#84cc16" : "#4A4E63",
                           }}>
                             {trucksHere}
                           </span>
@@ -1272,23 +1288,24 @@ export default function Home() {
                       );
 
                     } else if (cell?.id === "boundary") {
-                      cellBg = "repeating-linear-gradient(45deg, #ef444420 0px, #ef444420 3px, transparent 3px, transparent 9px)";
-                      cellBorderR = "2px solid #ef4444";
-                      cellBorderB = "2px solid #ef4444";
-                      cellBorderL = "2px solid #ef4444";
-                      cellBorderT = "2px solid #ef4444";
+                      cellBg = "repeating-linear-gradient(45deg, #ef444410 0px, #ef444410 3px, transparent 3px, transparent 9px)";
+                      cellBorderR = "1px solid #ef444440";
+                      cellBorderB = "1px solid #ef444440";
+                      cellBorderL = "1px solid #ef444440";
+                      cellBorderT = "1px solid #ef444440";
                       content = (
-                        <span style={{ fontSize: 7, fontWeight: 800, color: "#ef4444", letterSpacing: "0.04em", lineHeight: 1 }}>
-                          BNDRY
+                        <span style={{ fontSize: 7, fontWeight: 700, color: "#ef444480", letterSpacing: "0.04em", lineHeight: 1, fontFamily: "monospace" }}>
+                          SB
                         </span>
                       );
 
                     } else if (cell) {
+                      const zoneCode = ZONES.find(z => z.id === cell.id)?.code || "";
+                      cellBg = cell.color + "12";
+                      cellBorderR = `1px solid ${cell.color}30`;
+                      cellBorderB = `1px solid ${cell.color}30`;
                       content = (
-                        <>
-                          <span style={{ fontSize: 17, lineHeight: 1 }}>{cell.emoji}</span>
-                          <div style={{ width: 8, height: 2, borderRadius: 1, background: cell.color, marginTop: 2, opacity: 0.5 }} />
-                        </>
+                        <span style={{ fontSize: 9, fontWeight: 700, color: cell.color + "cc", lineHeight: 1, letterSpacing: "0.04em", fontFamily: "monospace" }}>{zoneCode}</span>
                       );
                     }
 
@@ -1333,12 +1350,12 @@ export default function Home() {
                         {hfp && (
                           <div style={{
                             position: "absolute", inset: 0,
-                            background: hfp.valid ? hfp.color + "26" : "#ef444426",
+                            background: hfp.valid ? hfp.color + "1a" : "#ef44441a",
                             pointerEvents: "none", zIndex: 3,
                             display: "flex", alignItems: "center", justifyContent: "center",
                           }}>
                             {!cell && i === hoveredCell && hoverZone && hoverZone.id !== "boundary" && (
-                              <span style={{ fontSize: 14, opacity: 0.4 }}>{hoverZone.emoji}</span>
+                              <span style={{ fontSize: 9, opacity: 0.4, color: hoverZone.color, fontWeight: 700, fontFamily: "monospace" }}>{hoverZone.code}</span>
                             )}
                           </div>
                         )}
@@ -1435,14 +1452,17 @@ export default function Home() {
                       }}
                     >
                       <div style={{
-                        background: isBlocked ? "#ef444420" : "#84cc1620",
-                        border: `1px solid ${isBlocked ? "#ef4444" : "#84cc16"}`,
-                        borderRadius: 4,
-                        padding: 2,
-                        fontSize: 14,
+                        background: isBlocked ? "#ef444418" : "#84cc1618",
+                        border: `1px solid ${isBlocked ? "#ef444440" : "#84cc1640"}`,
+                        borderRadius: 3,
+                        padding: "2px 4px",
+                        fontSize: 8,
+                        fontWeight: 700,
                         lineHeight: 1,
+                        color: isBlocked ? "#ef4444" : "#84cc16",
+                        fontFamily: "monospace",
                       }}>
-                        🚛
+                        TK
                       </div>
                     </div>
                   );
@@ -1450,21 +1470,21 @@ export default function Home() {
                 {simulationState && (
                   <div style={{
                     position: 'absolute', top: 8, right: 8,
-                    background: '#0f152099', backdropFilter: 'blur(8px)',
-                    border: '1px solid #1e293b', borderRadius: 10,
-                    padding: '10px 14px', zIndex: 30, minWidth: 160,
-                    display: 'flex', flexDirection: 'column', gap: 6,
+                    background: 'rgba(15,17,23,0.85)', backdropFilter: 'blur(8px)',
+                    border: '1px solid rgba(255,255,255,0.06)', borderRadius: 8,
+                    padding: '10px 14px', zIndex: 30, minWidth: 150,
+                    display: 'flex', flexDirection: 'column', gap: 5,
                   }}>
-                    <div style={{ fontSize: 10, fontWeight: 700, color: '#475569', letterSpacing: '0.08em' }}>LIVE SITE STATUS</div>
+                    <div style={{ fontSize: 10, fontWeight: 600, color: '#4A4E63', letterSpacing: '0.06em' }}>SITE STATUS</div>
                     {[
-                      { label: 'Phase', value: simulationState.phase?.replace(/_/g, ' ').toUpperCase(), color: '#60a5fa' },
-                      { label: 'Workers On Site', value: simulationState.total_workers, color: '#3b82f6' },
-                      { label: 'Active Tasks', value: simulationState.active_tasks?.length || 0, color: '#22c55e' },
-                      { label: 'Today Risk', value: '$' + (simConflicts.reduce((s,c) => s + (c.cost_impact||0), 0)).toLocaleString(), color: simConflicts.some(c => c.severity === 'HIGH') ? '#ef4444' : '#f59e0b' },
+                      { label: 'Phase', value: simulationState.phase?.replace(/_/g, ' ').toUpperCase(), color: '#8B8FA3' },
+                      { label: 'Workers', value: simulationState.total_workers, color: '#8B8FA3' },
+                      { label: 'Tasks', value: simulationState.active_tasks?.length || 0, color: '#8B8FA3' },
+                      { label: 'Risk', value: '$' + (simConflicts.reduce((s,c) => s + (c.cost_impact||0), 0)).toLocaleString(), color: simConflicts.some(c => c.severity === 'HIGH') ? '#ef4444' : '#8B8FA3' },
                     ].map(({ label, value, color }) => (
                       <div key={label} style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
-                        <span style={{ fontSize: 11, color: '#64748b' }}>{label}</span>
-                        <span style={{ fontSize: 11, fontWeight: 700, color }}>{value}</span>
+                        <span style={{ fontSize: 10, color: '#4A4E63' }}>{label}</span>
+                        <span style={{ fontSize: 10, fontWeight: 600, color }}>{value}</span>
                       </div>
                     ))}
                   </div>
@@ -1474,17 +1494,17 @@ export default function Home() {
 
             {/* Zone Legend */}
             <div style={S.legend}>
-              {zoneCounts.map((z) => (
+              {zoneCounts.filter(z => z.id !== "eraser").map((z) => (
                 <div key={z.id} style={S.legendItem}>
-                  <div style={{ width: 8, height: 8, borderRadius: 2, background: z.color }} />
-                  <span style={{ fontSize: 11, color: "#64748b" }}>
+                  <div style={{ width: 6, height: 6, borderRadius: "50%", background: z.color, opacity: 0.7 }} />
+                  <span style={{ fontSize: 10, color: "#4A4E63" }}>
                     {z.label}{z.count > 0 ? ` (${z.count})` : ""}
                   </span>
                 </div>
               ))}
               <div style={{ marginLeft: "auto", paddingRight: 24 }}>
-                <span style={{ fontSize: 11, color: "#334155" }}>
-                  1 tile = 10 ft · Site = 300 × 300 ft
+                <span style={{ fontSize: 10, color: "#4A4E63" }}>
+                  1 tile = 10 ft
                 </span>
               </div>
             </div>
@@ -1500,45 +1520,44 @@ export default function Home() {
 
           {/* Timeline */}
           <div style={S.timeline}>
-            <button onClick={rewind} style={{ ...S.playBtn, background: "#1e293b", fontSize: 14 }} title="Rewind to Day 1">
-              ⏮
+            <button onClick={rewind} style={{ ...S.playBtn }} title="Rewind to Day 1">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/></svg>
             </button>
             <button
-              onClick={() => {
-                setIsPlaying(!isPlaying);
-              }}
+              onClick={() => { setIsPlaying(!isPlaying); }}
               style={{
                 ...S.playBtn,
-                background: isPlaying
-                  ? "#1e293b"
-                  : "linear-gradient(135deg, #3b82f6, #2563eb)",
-                boxShadow: isPlaying ? "none" : "0 0 24px #3b82f630",
+                background: isPlaying ? "transparent" : "#6366F1",
+                borderColor: isPlaying ? "rgba(255,255,255,0.06)" : "#6366F1",
+                color: "#fff",
               }}
             >
-              {isPlaying ? "⏸" : "▶"}
+              {isPlaying ? (
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+              ) : (
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+              )}
             </button>
             <div style={S.dayInfo}>
-              <span style={{ fontSize: 15, fontWeight: 700, color: "#f1f5f9" }}>
+              <span style={{ fontSize: 13, fontWeight: 600, color: "#e2e8f0" }}>
                 Day {day}
               </span>
-              <span style={{ fontSize: 11, color: "#475569" }}>of {projectDuration}</span>
+              <span style={{ fontSize: 10, color: "#4A4E63" }}>of {projectDuration}</span>
             </div>
             <button
               onClick={() => skipDays(7)}
               disabled={day >= projectDuration}
               style={{
                 ...S.toolBtn,
-                borderColor: "#334155",
-                background: "#1e293b",
-                color: "#94a3b8",
+                color: "#8B8FA3",
                 fontSize: 11,
-                padding: "5px 10px",
-                opacity: day >= projectDuration ? 0.4 : 1,
+                padding: "4px 8px",
+                opacity: day >= projectDuration ? 0.3 : 1,
                 cursor: day >= projectDuration ? "not-allowed" : "pointer",
               }}
               title="Skip forward 7 days"
             >
-              +7 days
+              +7d
             </button>
 
             <div style={S.durationPicker}>
@@ -1564,9 +1583,9 @@ export default function Home() {
                     <span
                       key={gp.label}
                       style={{
-                        fontSize: 10,
-                        color: progress >= pct ? "#60a5fa" : "#334155",
-                        fontWeight: progress >= pct ? 600 : 400,
+                        fontSize: 9,
+                        color: progress >= pct ? "#8B8FA3" : "#4A4E63",
+                        fontWeight: 500,
                         position: "absolute",
                         left: `${pct}%`,
                         transform: "translateX(-50%)",
@@ -1594,7 +1613,7 @@ export default function Home() {
                       top: 0,
                       bottom: 0,
                       width: 1,
-                      background: "#334155",
+                      background: "rgba(255,255,255,0.04)",
                     }}
                   />
                 ))}
@@ -1602,10 +1621,9 @@ export default function Home() {
             </div>
 
             <div style={S.pctDisplay}>
-              <span style={{ fontSize: 20, fontWeight: 800, color: "#60a5fa", fontVariantNumeric: "tabular-nums" }}>
+              <span style={{ fontSize: 14, fontWeight: 600, color: "#8B8FA3", fontVariantNumeric: "tabular-nums" }}>
                 {Math.round(progress)}%
               </span>
-              <span style={{ fontSize: 10, color: "#475569" }}>Complete</span>
             </div>
           </div>
         </div>
@@ -1613,24 +1631,19 @@ export default function Home() {
         {/* ──── RIGHT COLUMN — AI CHAT ──── */}
         <div style={{
           ...S.rightCol,
-          borderLeft: hasNewAlert ? "1.5px solid #ef4444" : "1px solid #1e293b",
-          boxShadow: hasNewAlert ? "inset 0 0 30px #ef444425, 0 0 40px #ef444420" : "none",
-          transition: "border-left 0.3s ease, box-shadow 0.3s ease",
+          borderLeft: hasNewAlert ? "1px solid rgba(239,68,68,0.3)" : "1px solid rgba(255,255,255,0.06)",
+          transition: "border-left 0.3s ease",
         }}>
           {/* Chat Header */}
           <div style={S.chatHeader}>
             <div style={S.avatar}>MC</div>
             <div>
-              <div style={{ fontSize: 14, fontWeight: 600, color: "#f1f5f9" }}>
-                Sean Chung
+              <div style={{ fontSize: 14, fontWeight: 600, color: "#e2e8f0" }}>
+                Mike Callahan
               </div>
-              <div style={{ fontSize: 11, color: "#64748b" }}>
+              <div style={{ fontSize: 11, color: "#8B8FA3" }}>
                 AI Construction Advisor
               </div>
-            </div>
-            <div style={S.onlineBadge}>
-              <div style={{ width: 6, height: 6, borderRadius: "50%", background: "#22c55e" }} />
-              <span style={{ fontSize: 11, color: "#4ade80" }}>Online</span>
             </div>
           </div>
 
@@ -1666,20 +1679,15 @@ export default function Home() {
                   style={{
                     maxWidth: "88%",
                     padding: "10px 14px",
-                    borderRadius: 12,
-                    borderBottomRightRadius: msg.role === "user" ? 4 : 12,
-                    borderBottomLeftRadius: msg.role === "ai" ? 4 : 12,
-                    background: msg.role === "user" ? "#1d4ed8" : "#1e293b",
+                    borderRadius: 8,
+                    background: "rgba(255,255,255,0.03)",
+                    border: "1px solid rgba(255,255,255,0.06)",
+                    borderLeft: msg.role === "ai" ? "2px solid #6366F1" : "1px solid rgba(255,255,255,0.06)",
                     fontSize: 13,
                     lineHeight: 1.55,
                     color: "#e2e8f0",
                   }}
                 >
-                  {msg.role === "ai" && (
-                    <div style={{ fontSize: 11, fontWeight: 600, color: "#60a5fa", marginBottom: 3 }}>
-                      Sean Chung
-                    </div>
-                  )}
                   {msg.role === "ai" ? (
                     <ReactMarkdown components={MD_COMPONENTS}>{msg.text}</ReactMarkdown>
                   ) : (
@@ -1713,9 +1721,9 @@ export default function Home() {
                 cursor: isLoading ? "not-allowed" : "pointer",
               }}
             >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <line x1="22" y1="2" x2="11" y2="13" />
-                <polygon points="22 2 15 22 11 13 2 9 22 2" />
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="5" y1="12" x2="19" y2="12" />
+                <polyline points="12 5 19 12 12 19" />
               </svg>
             </button>
           </div>
@@ -1756,26 +1764,29 @@ function NavTab({ label, active, onClick, badge }) {
       style={{
         background: "none",
         border: "none",
+        borderBottom: active ? "2px solid #6366F1" : "2px solid transparent",
         fontSize: 12,
-        fontWeight: 600,
-        letterSpacing: "0.04em",
-        color: active ? "#e2e8f0" : "#475569",
-        padding: "6px 14px",
-        borderRadius: 6,
+        fontWeight: 500,
+        letterSpacing: "0.03em",
+        color: active ? "#ffffff" : "#8B8FA3",
+        padding: "8px 14px",
+        borderRadius: 0,
         cursor: "pointer",
         position: "relative",
-        ...(active && { background: "#1e293b" }),
+        transition: "color 0.15s, border-color 0.15s",
+        marginBottom: -1,
       }}
     >
       {label}
       {badge > 0 && (
         <span style={{
-          position: "absolute", top: -4, right: -4,
-          minWidth: 16, height: 16, borderRadius: 8,
-          background: "#ef4444", color: "#fff",
-          fontSize: 9, fontWeight: 700,
+          position: "absolute", top: 2, right: 2,
+          minWidth: 14, height: 14, borderRadius: 7,
+          background: "rgba(239,68,68,0.15)", color: "#ef4444",
+          fontSize: 9, fontWeight: 600,
           display: "flex", alignItems: "center", justifyContent: "center",
-          padding: "0 4px", lineHeight: 1,
+          padding: "0 3px", lineHeight: 1,
+          border: "1px solid rgba(239,68,68,0.2)",
         }}>{badge}</span>
       )}
     </button>
@@ -1799,9 +1810,9 @@ function OptimizerModal({ loading, result, onGenerate, onClose }) {
     width: "100%",
     height: 40,
     padding: "0 12px",
-    borderRadius: 7,
-    background: "#0c1221",
-    border: "1px solid #1e293b",
+    borderRadius: 6,
+    background: "#1A1D2B",
+    border: "1px solid rgba(255,255,255,0.06)",
     color: "#e2e8f0",
     fontSize: 13,
     outline: "none",
@@ -1810,8 +1821,8 @@ function OptimizerModal({ loading, result, onGenerate, onClose }) {
 
   const labelStyle = {
     fontSize: 11,
-    fontWeight: 600,
-    color: "#94a3b8",
+    fontWeight: 500,
+    color: "#8B8FA3",
     marginBottom: 4,
     display: "block",
   };
@@ -1821,28 +1832,28 @@ function OptimizerModal({ loading, result, onGenerate, onClose }) {
       onClick={onClose}
       style={{
         position: "fixed", inset: 0, zIndex: 1000,
-        background: "rgba(0,0,0,0.7)", backdropFilter: "blur(4px)",
+        background: "rgba(0,0,0,0.6)", backdropFilter: "blur(4px)",
         display: "flex", alignItems: "center", justifyContent: "center",
       }}
     >
       <div
         onClick={(e) => e.stopPropagation()}
         style={{
-          width: 460, background: "#0f1520", borderRadius: 14,
-          border: "1px solid #1e293b", boxShadow: "0 24px 80px rgba(0,0,0,0.6)",
+          width: 460, background: "#0F1117", borderRadius: 10,
+          border: "1px solid rgba(255,255,255,0.06)", boxShadow: "0 24px 80px rgba(0,0,0,0.5)",
           overflow: "hidden",
         }}
       >
         {/* Header */}
         <div style={{
-          padding: "20px 24px 16px", borderBottom: "1px solid #1e293b",
+          padding: "20px 24px 16px", borderBottom: "1px solid rgba(255,255,255,0.06)",
           display: "flex", alignItems: "flex-start", justifyContent: "space-between",
         }}>
           <div>
-            <div style={{ fontSize: 16, fontWeight: 700, color: "#f1f5f9", display: "flex", alignItems: "center", gap: 8 }}>
-              <span>{"✨"}</span> AI Layout Optimizer
+            <div style={{ fontSize: 15, fontWeight: 600, color: "#e2e8f0" }}>
+              AI Layout Optimizer
             </div>
-            <div style={{ fontSize: 12, color: "#64748b", marginTop: 4, lineHeight: 1.4 }}>
+            <div style={{ fontSize: 12, color: "#8B8FA3", marginTop: 4, lineHeight: 1.4 }}>
               Describe your project and available resources. Mike will generate the optimal site layout.
             </div>
           </div>
@@ -1919,14 +1930,13 @@ function OptimizerModal({ loading, result, onGenerate, onClose }) {
             disabled={loading || !desc.trim()}
             style={{
               height: 44, borderRadius: 8, border: "none",
-              background: loading ? "#1e293b" : "linear-gradient(135deg, #8b5cf6, #6d28d9)",
+              background: loading ? "rgba(255,255,255,0.04)" : "#6366F1",
               color: "#fff", fontSize: 14, fontWeight: 600,
               cursor: loading ? "not-allowed" : "pointer",
               fontFamily: "inherit",
               display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
               opacity: loading || !desc.trim() ? 0.6 : 1,
               transition: "all 0.15s",
-              boxShadow: loading ? "none" : "0 0 20px #8b5cf625",
             }}
           >
             {loading ? (
@@ -1958,9 +1968,9 @@ function ProjectsModal({ projects, nameInput, onNameChange, onSave, onLoad, onDe
     flex: 1,
     height: 38,
     padding: "0 12px",
-    borderRadius: 7,
-    background: "#0c1221",
-    border: "1px solid #1e293b",
+    borderRadius: 6,
+    background: "#1A1D2B",
+    border: "1px solid rgba(255,255,255,0.06)",
     color: "#e2e8f0",
     fontSize: 13,
     outline: "none",
@@ -1972,26 +1982,26 @@ function ProjectsModal({ projects, nameInput, onNameChange, onSave, onLoad, onDe
       onClick={onClose}
       style={{
         position: "fixed", inset: 0, zIndex: 1000,
-        background: "rgba(0,0,0,0.7)", backdropFilter: "blur(4px)",
+        background: "rgba(0,0,0,0.6)", backdropFilter: "blur(4px)",
         display: "flex", alignItems: "center", justifyContent: "center",
       }}
     >
       <div
         onClick={(e) => e.stopPropagation()}
         style={{
-          width: 520, maxHeight: "80vh", background: "#0f1520", borderRadius: 14,
-          border: "1px solid #1e293b", boxShadow: "0 24px 80px rgba(0,0,0,0.6)",
+          width: 520, maxHeight: "80vh", background: "#0F1117", borderRadius: 10,
+          border: "1px solid rgba(255,255,255,0.06)", boxShadow: "0 24px 80px rgba(0,0,0,0.5)",
           display: "flex", flexDirection: "column", overflow: "hidden",
         }}
       >
         {/* Header */}
         <div style={{
-          padding: "20px 24px 16px", borderBottom: "1px solid #1e293b",
+          padding: "20px 24px 16px", borderBottom: "1px solid rgba(255,255,255,0.06)",
           display: "flex", alignItems: "center", justifyContent: "space-between",
           flexShrink: 0,
         }}>
-          <div style={{ fontSize: 16, fontWeight: 700, color: "#f1f5f9", display: "flex", alignItems: "center", gap: 8 }}>
-            <span>{"\uD83D\uDCC1"}</span> Projects
+          <div style={{ fontSize: 15, fontWeight: 600, color: "#e2e8f0" }}>
+            Projects
           </div>
           <button
             onClick={onClose}
@@ -2007,7 +2017,7 @@ function ProjectsModal({ projects, nameInput, onNameChange, onSave, onLoad, onDe
 
         {/* Save Section */}
         <div style={{
-          padding: "16px 24px", borderBottom: "1px solid #1e293b",
+          padding: "16px 24px", borderBottom: "1px solid rgba(255,255,255,0.06)",
           display: "flex", gap: 8, alignItems: "center", flexShrink: 0,
         }}>
           <input
@@ -2021,13 +2031,12 @@ function ProjectsModal({ projects, nameInput, onNameChange, onSave, onLoad, onDe
             onClick={onSave}
             disabled={!nameInput.trim()}
             style={{
-              height: 38, borderRadius: 7, border: "none",
-              background: !nameInput.trim() ? "#1e293b" : "linear-gradient(135deg, #3b82f6, #2563eb)",
+              height: 38, borderRadius: 6, border: "none",
+              background: !nameInput.trim() ? "rgba(255,255,255,0.04)" : "#6366F1",
               color: "#fff", fontSize: 13, fontWeight: 600,
               padding: "0 18px", cursor: !nameInput.trim() ? "not-allowed" : "pointer",
               fontFamily: "inherit", whiteSpace: "nowrap",
               opacity: !nameInput.trim() ? 0.5 : 1,
-              boxShadow: !nameInput.trim() ? "none" : "0 0 12px #3b82f630",
               transition: "all 0.15s",
             }}
           >
@@ -2042,8 +2051,7 @@ function ProjectsModal({ projects, nameInput, onNameChange, onSave, onLoad, onDe
               padding: "40px 24px", textAlign: "center",
               display: "flex", flexDirection: "column", alignItems: "center", gap: 8,
             }}>
-              <span style={{ fontSize: 32, opacity: 0.4 }}>{"\uD83D\uDCC2"}</span>
-              <span style={{ fontSize: 13, color: "#475569", lineHeight: 1.5 }}>
+              <span style={{ fontSize: 13, color: "#4A4E63", lineHeight: 1.5 }}>
                 No saved projects. Save your current layout to get started.
               </span>
             </div>
@@ -2053,23 +2061,23 @@ function ProjectsModal({ projects, nameInput, onNameChange, onSave, onLoad, onDe
                 key={p.id}
                 style={{
                   padding: "12px 24px",
-                  borderBottom: "1px solid #1e293b20",
+                  borderBottom: "1px solid rgba(255,255,255,0.04)",
                   display: "flex", alignItems: "center", gap: 12,
                 }}
               >
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13, fontWeight: 600, color: "#e2e8f0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  <div style={{ fontSize: 13, fontWeight: 500, color: "#e2e8f0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                     {p.name}
                   </div>
-                  <div style={{ fontSize: 11, color: "#475569", marginTop: 2 }}>
+                  <div style={{ fontSize: 11, color: "#4A4E63", marginTop: 2 }}>
                     {p.zone_count} zone{p.zone_count !== 1 ? "s" : ""} &middot; {fmtDate(p.created_at)}
                   </div>
                 </div>
                 <button
                   onClick={() => onLoad(p)}
                   style={{
-                    fontSize: 11, fontWeight: 600, color: "#60a5fa",
-                    background: "#3b82f615", border: "1px solid #3b82f630",
+                    fontSize: 11, fontWeight: 500, color: "#8B8FA3",
+                    background: "transparent", border: "1px solid rgba(255,255,255,0.06)",
                     borderRadius: 5, padding: "5px 12px", cursor: "pointer",
                     fontFamily: "inherit", transition: "all 0.15s",
                   }}
@@ -2079,8 +2087,8 @@ function ProjectsModal({ projects, nameInput, onNameChange, onSave, onLoad, onDe
                 <button
                   onClick={() => onDelete(p.id)}
                   style={{
-                    fontSize: 11, fontWeight: 600, color: "#ef4444",
-                    background: "transparent", border: "1px solid #ef444430",
+                    fontSize: 11, fontWeight: 500, color: "#4A4E63",
+                    background: "transparent", border: "1px solid rgba(255,255,255,0.06)",
                     borderRadius: 5, padding: "5px 10px", cursor: "pointer",
                     fontFamily: "inherit", transition: "all 0.15s",
                   }}
@@ -2139,13 +2147,13 @@ function LoginScreen() {
   return (
     <div style={{
       position: "fixed", inset: 0, zIndex: 9999,
-      background: "#060a14",
+      background: "#0F1117",
       display: "flex", alignItems: "center", justifyContent: "center",
     }}>
       <div style={{
-        width: 400, background: "#0f1520", borderRadius: 14,
-        border: "1px solid #1e293b",
-        boxShadow: "0 24px 80px rgba(0,0,0,0.6)",
+        width: 400, background: "#0F1117", borderRadius: 10,
+        border: "1px solid rgba(255,255,255,0.06)",
+        boxShadow: "0 24px 80px rgba(0,0,0,0.4)",
         overflow: "hidden",
       }}>
         {/* Logo + Title */}
@@ -2155,21 +2163,21 @@ function LoginScreen() {
             gap: 10, marginBottom: 8,
           }}>
             <div style={{
-              width: 36, height: 36, borderRadius: 8,
-              background: "linear-gradient(135deg, #3b82f6, #1d4ed8)",
+              width: 34, height: 34, borderRadius: 8,
+              background: "#6366F1",
               display: "flex", alignItems: "center", justifyContent: "center",
-              fontSize: 18, fontWeight: 800, color: "#fff",
+              fontSize: 16, fontWeight: 800, color: "#fff",
             }}>
               C
             </div>
             <span style={{
-              fontSize: 22, fontWeight: 700, color: "#60a5fa",
-              letterSpacing: "-0.03em",
+              fontSize: 20, fontWeight: 600, color: "#ffffff",
+              letterSpacing: "-0.02em",
             }}>
               ConstructIQ
             </span>
           </div>
-          <p style={{ fontSize: 13, color: "#475569", margin: 0 }}>
+          <p style={{ fontSize: 13, color: "#8B8FA3", margin: 0 }}>
             AI-Powered Construction Intelligence
           </p>
         </div>
@@ -2177,7 +2185,7 @@ function LoginScreen() {
         {/* Tabs */}
         <div style={{
           display: "flex", margin: "0 32px", borderRadius: 8,
-          background: "#0c1221", border: "1px solid #1e293b",
+          background: "#1A1D2B", border: "1px solid rgba(255,255,255,0.06)",
           overflow: "hidden",
         }}>
           {["login", "signup"].map((tab) => (
@@ -2186,11 +2194,10 @@ function LoginScreen() {
               onClick={() => switchTab(tab)}
               style={{
                 flex: 1, padding: "10px 0", fontSize: 13, fontWeight: 600,
-                color: activeTab === tab ? "#e2e8f0" : "#475569",
-                background: activeTab === tab ? "#1d4ed8" : "transparent",
+                color: activeTab === tab ? "#e2e8f0" : "#8B8FA3",
+                background: activeTab === tab ? "#6366F1" : "transparent",
                 border: "none", cursor: "pointer", fontFamily: "inherit",
                 transition: "all 0.15s",
-                boxShadow: activeTab === tab ? "0 0 12px #3b82f630" : "none",
               }}
             >
               {tab === "login" ? "Login" : "Sign Up"}
@@ -2204,7 +2211,7 @@ function LoginScreen() {
           display: "flex", flexDirection: "column", gap: 16,
         }}>
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            <label style={{ fontSize: 12, fontWeight: 600, color: "#94a3b8" }}>Email</label>
+            <label style={{ fontSize: 12, fontWeight: 500, color: "#8B8FA3" }}>Email</label>
             <input
               type="email"
               value={email}
@@ -2213,7 +2220,7 @@ function LoginScreen() {
               required
               style={{
                 width: "100%", height: 42, padding: "0 14px", borderRadius: 8,
-                background: "#0c1221", border: "1px solid #1e293b", color: "#e2e8f0",
+                background: "#1A1D2B", border: "1px solid rgba(255,255,255,0.06)", color: "#e2e8f0",
                 fontSize: 13, outline: "none", fontFamily: "inherit",
                 transition: "border-color 0.15s, box-shadow 0.15s",
               }}
@@ -2221,7 +2228,7 @@ function LoginScreen() {
           </div>
 
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            <label style={{ fontSize: 12, fontWeight: 600, color: "#94a3b8" }}>Password</label>
+            <label style={{ fontSize: 12, fontWeight: 500, color: "#8B8FA3" }}>Password</label>
             <input
               type="password"
               value={password}
@@ -2231,7 +2238,7 @@ function LoginScreen() {
               minLength={isLogin ? undefined : 6}
               style={{
                 width: "100%", height: 42, padding: "0 14px", borderRadius: 8,
-                background: "#0c1221", border: "1px solid #1e293b", color: "#e2e8f0",
+                background: "#1A1D2B", border: "1px solid rgba(255,255,255,0.06)", color: "#e2e8f0",
                 fontSize: 13, outline: "none", fontFamily: "inherit",
                 transition: "border-color 0.15s, box-shadow 0.15s",
               }}
@@ -2243,12 +2250,11 @@ function LoginScreen() {
             disabled={loading}
             style={{
               width: "100%", height: 44, borderRadius: 8, border: "none",
-              background: loading ? "#1e293b" : "linear-gradient(135deg, #3b82f6, #2563eb)",
+              background: loading ? "rgba(255,255,255,0.04)" : "#6366F1",
               color: "#fff", fontSize: 14, fontWeight: 600,
               cursor: loading ? "not-allowed" : "pointer", fontFamily: "inherit",
               display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
               opacity: loading ? 0.6 : 1, transition: "all 0.15s",
-              boxShadow: loading ? "none" : "0 0 20px #3b82f625",
               marginTop: 4,
             }}
           >
@@ -2294,10 +2300,9 @@ function LoginScreen() {
 function AnalyticsDashboard({ analytics }) {
   if (!analytics.length) {
     return (
-      <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 8, background: "#080c18" }}>
-        <span style={{ fontSize: 36 }}>📊</span>
-        <span style={{ fontSize: 14, fontWeight: 600, color: "#64748b" }}>No analytics data yet</span>
-        <span style={{ fontSize: 12, color: "#475569" }}>Press play to start the simulation</span>
+      <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 8, background: "#12141E" }}>
+        <span style={{ fontSize: 14, fontWeight: 500, color: "#8B8FA3" }}>No analytics data yet</span>
+        <span style={{ fontSize: 12, color: "#4A4E63" }}>Press play to start the simulation</span>
       </div>
     );
   }
@@ -2323,13 +2328,13 @@ function AnalyticsDashboard({ analytics }) {
       const label = fmt ? fmt(Math.round(pct * maxVal)) : Math.round(pct * maxVal);
       return (
         <g key={pct}>
-          <line x1={P.l} y1={y} x2={W - P.r} y2={y} stroke="#1e293b" strokeWidth="1" />
-          <text x={P.l - 4} y={y + 3} fill="#475569" fontSize="9" textAnchor="end" fontFamily="monospace">{label}</text>
+          <line x1={P.l} y1={y} x2={W - P.r} y2={y} stroke="rgba(255,255,255,0.04)" strokeWidth="1" />
+          <text x={P.l - 4} y={y + 3} fill="#4A4E63" fontSize="9" textAnchor="end" fontFamily="monospace">{label}</text>
         </g>
       );
     });
 
-  const baseline = <line x1={P.l} y1={P.t + iH} x2={W - P.r} y2={P.t + iH} stroke="#334155" strokeWidth="1" />;
+  const baseline = <line x1={P.l} y1={P.t + iH} x2={W - P.r} y2={P.t + iH} stroke="rgba(255,255,255,0.06)" strokeWidth="1" />;
 
   const polyStr = (pts) => pts.map((p) => `${p.x},${p.y}`).join(" ");
   const areaPath = (pts) => {
@@ -2359,30 +2364,30 @@ function AnalyticsDashboard({ analytics }) {
   }));
 
   const card = {
-    background: "#0f1520",
-    borderRadius: 10,
-    border: "1px solid #1e293b",
+    background: "#0F1117",
+    borderRadius: 8,
+    border: "1px solid rgba(255,255,255,0.06)",
     padding: "12px 14px",
     display: "flex",
     flexDirection: "column",
     gap: 6,
     overflow: "hidden",
   };
-  const titleSt = { fontSize: 11, fontWeight: 700, color: "#64748b", letterSpacing: "0.06em" };
+  const titleSt = { fontSize: 10, fontWeight: 600, color: "#4A4E63", letterSpacing: "0.06em" };
 
   return (
-    <div style={{ flex: 1, overflow: "auto", background: "#080c18", padding: "16px 20px", display: "flex", flexDirection: "column", gap: 14 }}>
+    <div style={{ flex: 1, overflow: "auto", background: "#12141E", padding: "16px 20px", display: "flex", flexDirection: "column", gap: 14 }}>
       {/* KPI row */}
       <div style={{ display: "flex", gap: 10 }}>
         {[
-          { label: "DAYS RECORDED", val: analytics.length, color: "#60a5fa" },
+          { label: "DAYS RECORDED", val: analytics.length, color: "#8B8FA3" },
           { label: "TOTAL CONFLICTS", val: totalConflicts, color: "#f59e0b" },
-          { label: "PEAK WORKERS", val: peakWorkers, color: "#3b82f6" },
+          { label: "PEAK WORKERS", val: peakWorkers, color: "#8B8FA3" },
           { label: "RISK EXPOSURE", val: fmtK(totalCost), color: "#ef4444" },
         ].map((k) => (
-          <div key={k.label} style={{ flex: 1, background: "#0f1520", borderRadius: 8, border: "1px solid #1e293b", padding: "10px 14px" }}>
-            <div style={{ fontSize: 10, color: "#475569", fontWeight: 600, letterSpacing: "0.08em", marginBottom: 2 }}>{k.label}</div>
-            <div style={{ fontSize: 20, fontWeight: 800, color: k.color, fontVariantNumeric: "tabular-nums" }}>{k.val}</div>
+          <div key={k.label} style={{ flex: 1, background: "#0F1117", borderRadius: 6, border: "1px solid rgba(255,255,255,0.06)", padding: "10px 14px" }}>
+            <div style={{ fontSize: 10, color: "#4A4E63", fontWeight: 500, letterSpacing: "0.06em", marginBottom: 2 }}>{k.label}</div>
+            <div style={{ fontSize: 18, fontWeight: 700, color: k.color, fontVariantNumeric: "tabular-nums" }}>{k.val}</div>
           </div>
         ))}
       </div>
@@ -2430,7 +2435,7 @@ function AnalyticsDashboard({ analytics }) {
                 return (
                   <g key={i}>
                     <text x={P.l} y={y + matRowH / 2 + 3} fill="#94a3b8" fontSize="9" fontFamily="monospace">{name}</text>
-                    <rect x={P.l + matLabelW} y={y + 4} width={matBarMax} height={matRowH - 8} rx={3} fill="#1e293b" />
+                    <rect x={P.l + matLabelW} y={y + 4} width={matBarMax} height={matRowH - 8} rx={3} fill="rgba(255,255,255,0.04)" />
                     <rect x={P.l + matLabelW} y={y + 4} width={bW} height={matRowH - 8} rx={3} fill={clr} opacity={0.8} />
                     <text x={P.l + matLabelW + matBarMax + 4} y={y + matRowH / 2 + 3} fill="#64748b" fontSize="9" fontFamily="monospace">
                       {Math.round(m.pct)}%
@@ -2484,30 +2489,26 @@ function ScheduleView({ analytics, day, currentPhase, projectDuration, ganttPhas
   );
 
   const milestones = [
-    { label: "Project Start", value: "Day 1", icon: "🚀", color: "#3b82f6" },
+    { label: "Project Start", value: "Day 1", color: "#6366F1" },
     {
       label: "First Conflict Detected",
       value: firstConflict ? `Day ${firstConflict.day}` : "—",
-      icon: "⚠️",
       color: "#f59e0b",
     },
     {
       label: "Peak Risk Day",
       value: peakRiskEntry && peakRiskEntry.costImpact > 0 ? `Day ${peakRiskEntry.day}` : "—",
-      icon: "📈",
       color: "#ef4444",
     },
     {
       label: "Critical Material Warning",
       value: critMaterial ? `Day ${critMaterial.day}` : "—",
-      icon: "📦",
       color: "#f97316",
     },
     {
       label: "Current Phase",
       value: currentPhase,
-      icon: "🏗️",
-      color: "#60a5fa",
+      color: "#8B8FA3",
     },
   ];
 
@@ -2517,33 +2518,33 @@ function ScheduleView({ analytics, day, currentPhase, projectDuration, ganttPhas
   if (ticks[ticks.length - 1] !== projectDuration) ticks.push(projectDuration);
 
   return (
-    <div style={{ flex: 1, overflow: "auto", background: "#080c18", padding: "20px 24px", display: "flex", flexDirection: "column", gap: 16 }}>
+    <div style={{ flex: 1, overflow: "auto", background: "#12141E", padding: "20px 24px", display: "flex", flexDirection: "column", gap: 16 }}>
       {/* Header */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <div>
-          <div style={{ fontSize: 16, fontWeight: 700, color: "#f1f5f9", marginBottom: 2 }}>Project Schedule</div>
-          <div style={{ fontSize: 12, color: "#475569" }}>{projectDuration}-day construction timeline — Day {day}</div>
+          <div style={{ fontSize: 14, fontWeight: 600, color: "#e2e8f0", marginBottom: 2 }}>Project Schedule</div>
+          <div style={{ fontSize: 11, color: "#8B8FA3" }}>{projectDuration}-day timeline — Day {day}</div>
         </div>
         <div style={{ display: "flex", gap: 12 }}>
           {ganttPhases.map((p) => (
             <div key={p.label} style={{ display: "flex", alignItems: "center", gap: 5 }}>
-              <div style={{ width: 10, height: 10, borderRadius: 3, background: p.color }} />
-              <span style={{ fontSize: 11, color: "#64748b" }}>{p.label}</span>
+              <div style={{ width: 8, height: 8, borderRadius: "50%", background: p.color, opacity: 0.7 }} />
+              <span style={{ fontSize: 10, color: "#8B8FA3" }}>{p.label}</span>
             </div>
           ))}
         </div>
       </div>
 
       {/* Gantt Chart */}
-      <div style={{ background: "#0f1520", borderRadius: 10, border: "1px solid #1e293b", padding: "16px 18px" }}>
+      <div style={{ background: "#0F1117", borderRadius: 8, border: "1px solid rgba(255,255,255,0.06)", padding: "16px 18px" }}>
         <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ display: "block" }}>
           {/* Timeline gridlines + labels */}
           {ticks.map((d) => {
             const x = dayToX(d);
             return (
               <g key={d}>
-                <line x1={x} y1={P.t - 4} x2={x} y2={P.t + iH} stroke="#1e293b" strokeWidth="1" />
-                <text x={x} y={P.t + iH + 14} fill="#475569" fontSize="9" fontFamily="monospace" textAnchor="middle">{d}</text>
+                <line x1={x} y1={P.t - 4} x2={x} y2={P.t + iH} stroke="rgba(255,255,255,0.04)" strokeWidth="1" />
+                <text x={x} y={P.t + iH + 14} fill="#4A4E63" fontSize="9" fontFamily="monospace" textAnchor="middle">{d}</text>
               </g>
             );
           })}
@@ -2563,9 +2564,9 @@ function ScheduleView({ analytics, day, currentPhase, projectDuration, ganttPhas
                 <text
                   x={P.l - 10}
                   y={y + h / 2 + 4}
-                  fill={isActive ? "#f1f5f9" : "#64748b"}
+                  fill={isActive ? "#e2e8f0" : "#8B8FA3"}
                   fontSize="11"
-                  fontWeight={isActive ? "700" : "500"}
+                  fontWeight={isActive ? "600" : "400"}
                   textAnchor="end"
                   fontFamily="inherit"
                 >
@@ -2573,7 +2574,7 @@ function ScheduleView({ analytics, day, currentPhase, projectDuration, ganttPhas
                 </text>
 
                 {/* Background track */}
-                <rect x={P.l} y={y} width={iW} height={h} rx={4} fill="#1e293b" opacity="0.3" />
+                <rect x={P.l} y={y} width={iW} height={h} rx={4} fill="rgba(255,255,255,0.02)" />
 
                 {/* Phase bar */}
                 <rect
@@ -2583,7 +2584,8 @@ function ScheduleView({ analytics, day, currentPhase, projectDuration, ganttPhas
                   height={h}
                   rx={4}
                   fill={phase.color}
-                  opacity={isPast ? 0.4 : isActive ? 0.9 : 0.55}
+                  opacity={isPast ? 0.3 : isActive ? 0.7 : 0.45}
+                  rx={4}
                 />
 
                 {/* Progress fill within active phase */}
@@ -2627,10 +2629,11 @@ function ScheduleView({ analytics, day, currentPhase, projectDuration, ganttPhas
                 key={`c-${i}`}
                 cx={cx}
                 cy={cy}
-                r={3.5}
+                r={2.5}
                 fill="#ef4444"
-                stroke="#080c18"
-                strokeWidth="1.5"
+                stroke="#0F1117"
+                strokeWidth="1"
+                opacity={0.7}
               />
             );
           })}
@@ -2638,32 +2641,30 @@ function ScheduleView({ analytics, day, currentPhase, projectDuration, ganttPhas
           {/* Today line */}
           <line
             x1={todayX}
-            y1={P.t - 12}
+            y1={P.t - 4}
             x2={todayX}
             y2={P.t + iH + 4}
-            stroke="#ef4444"
-            strokeWidth="2"
-            strokeDasharray="4 3"
+            stroke="#6366F1"
+            strokeWidth="1"
           />
-          <rect x={todayX - 18} y={P.t - 24} width={36} height={14} rx={3} fill="#ef4444" />
           <text
             x={todayX}
-            y={P.t - 14}
-            fill="#fff"
+            y={P.t - 8}
+            fill="#6366F1"
             fontSize="8"
-            fontWeight="700"
+            fontWeight="600"
             textAnchor="middle"
             fontFamily="monospace"
           >
-            DAY {day}
+            {day}
           </text>
         </svg>
       </div>
 
       {/* Milestone Table */}
-      <div style={{ background: "#0f1520", borderRadius: 10, border: "1px solid #1e293b", overflow: "hidden" }}>
-        <div style={{ padding: "12px 18px", borderBottom: "1px solid #1e293b" }}>
-          <span style={{ fontSize: 11, fontWeight: 700, color: "#64748b", letterSpacing: "0.06em" }}>PROJECT MILESTONES</span>
+      <div style={{ background: "#0F1117", borderRadius: 8, border: "1px solid rgba(255,255,255,0.06)", overflow: "hidden" }}>
+        <div style={{ padding: "12px 18px", borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
+          <span style={{ fontSize: 10, fontWeight: 600, color: "#4A4E63", letterSpacing: "0.06em" }}>PROJECT MILESTONES</span>
         </div>
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead>
@@ -2675,10 +2676,10 @@ function ScheduleView({ analytics, day, currentPhase, projectDuration, ganttPhas
                     padding: "8px 18px",
                     textAlign: "left",
                     fontSize: 10,
-                    fontWeight: 600,
-                    color: "#334155",
-                    borderBottom: "1px solid #1e293b",
-                    letterSpacing: "0.06em",
+                    fontWeight: 500,
+                    color: "#4A4E63",
+                    borderBottom: "1px solid rgba(255,255,255,0.06)",
+                    letterSpacing: "0.04em",
                   }}
                 >
                   {h}
@@ -2688,25 +2689,23 @@ function ScheduleView({ analytics, day, currentPhase, projectDuration, ganttPhas
           </thead>
           <tbody>
             {milestones.map((m, i) => (
-              <tr key={i} style={{ borderBottom: i < milestones.length - 1 ? "1px solid #1e293b20" : "none" }}>
-                <td style={{ padding: "10px 18px", fontSize: 16, width: 44 }}>{m.icon}</td>
-                <td style={{ padding: "10px 0", fontSize: 13, fontWeight: 600, color: "#e2e8f0" }}>{m.label}</td>
+              <tr key={i} style={{ borderBottom: i < milestones.length - 1 ? "1px solid rgba(255,255,255,0.04)" : "none" }}>
+                <td style={{ padding: "10px 18px", width: 32 }}>
+                  <div style={{ width: 6, height: 6, borderRadius: "50%", background: m.color, opacity: 0.6 }} />
+                </td>
+                <td style={{ padding: "10px 0", fontSize: 12, fontWeight: 500, color: "#e2e8f0" }}>{m.label}</td>
                 <td style={{ padding: "10px 18px" }}>
                   <span style={{
                     fontSize: 12,
-                    fontWeight: 700,
-                    color: m.value === "—" ? "#334155" : m.color,
+                    fontWeight: 600,
+                    color: m.value === "—" ? "#4A4E63" : m.color,
                     fontVariantNumeric: "tabular-nums",
                     fontFamily: "monospace",
                   }}>
                     {m.value}
                   </span>
                 </td>
-                <td style={{ padding: "10px 18px", width: 24 }}>
-                  {m.value !== "—" && (
-                    <div style={{ width: 8, height: 8, borderRadius: "50%", background: m.color, opacity: 0.6 }} />
-                  )}
-                </td>
+                <td style={{ padding: "10px 18px", width: 24 }} />
               </tr>
             ))}
           </tbody>
@@ -2739,12 +2738,12 @@ const milestoneColor = (type) => {
 };
 
 const cfgInput = {
-  height: 32, background: "#0c1221", border: "1px solid #1e293b", color: "#e2e8f0",
+  height: 32, background: "#1A1D2B", border: "1px solid rgba(255,255,255,0.06)", color: "#e2e8f0",
   borderRadius: 6, fontSize: 12, fontFamily: "inherit", padding: "0 8px", outline: "none",
 };
-const cfgLabel = { fontSize: 10, color: "#94a3b8", textTransform: "uppercase", marginBottom: 2 };
+const cfgLabel = { fontSize: 10, color: "#8B8FA3", textTransform: "uppercase", marginBottom: 2 };
 const cfgCard = {
-  background: "#0f1520", border: "1px solid #1e293b", borderRadius: 8, padding: 14,
+  background: "transparent", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 6, padding: 14,
 };
 
 function getValidationIssues(config, cells) {
@@ -2889,13 +2888,13 @@ function getValidationIssues(config, cells) {
   });
   config.equipment.forEach((eq) => {
     if (eq.type === "Concrete Pump") {
-      let idleDay = null;
+      let hasOverlap = false;
       for (let d = eq.arrivalDay; d <= eq.departureDay; d++) {
-        if (!concreteDays.has(d)) { idleDay = d; break; }
+        if (concreteDays.has(d)) { hasOverlap = true; break; }
       }
-      if (idleDay !== null) {
+      if (!hasOverlap) {
         issues.push({ severity: "warning", section: "equipment",
-          message: `Concrete pump active on Day ${idleDay} but no concrete delivery scheduled — equipment may be idle` });
+          message: `Concrete pump (Day ${eq.arrivalDay}–${eq.departureDay}) has no concrete deliveries scheduled during its active window — equipment may be idle` });
       }
     }
   });
@@ -3087,46 +3086,52 @@ function ConfigurePanel({ cells, projectDuration, onConfigSave, onValidationChan
   }, [errorCount, onValidationChange]);
 
   return (
-    <div style={{ display: "flex", height: "100%", background: "#080c18", overflow: "hidden" }}>
+    <div style={{ display: "flex", height: "100%", background: "#12141E", overflow: "hidden" }}>
       {/* Sidebar */}
-      <div style={{ width: 200, background: "#0f1520", borderRight: "1px solid #1e293b", display: "flex", flexDirection: "column", flexShrink: 0 }}>
-        <div style={{ padding: "16px 12px 8px", fontSize: 11, color: "#475569", textTransform: "uppercase", letterSpacing: "0.06em" }}>
+      <div style={{ width: 200, background: "#0F1117", borderRight: "1px solid rgba(255,255,255,0.06)", display: "flex", flexDirection: "column", flexShrink: 0 }}>
+        <div style={{ padding: "16px 12px 8px", fontSize: 10, color: "#4A4E63", textTransform: "uppercase", letterSpacing: "0.06em" }}>
           Configuration
         </div>
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 2, padding: "0 8px" }}>
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 1, padding: "0 8px" }}>
           {CONFIGURE_SECTIONS.map((s) => (
             <button
               key={s}
               onClick={() => setSection(s)}
               style={{
-                background: section === s ? "#1e293b" : "transparent",
-                border: "none", color: section === s ? "#e2e8f0" : "#94a3b8",
-                fontSize: 12, fontWeight: 500, padding: "8px 10px", borderRadius: 6,
+                background: section === s ? "rgba(99,102,241,0.1)" : "transparent",
+                borderLeft: section === s ? "2px solid #6366F1" : "2px solid transparent",
+                border: "none",
+                borderLeftWidth: 2,
+                borderLeftStyle: "solid",
+                borderLeftColor: section === s ? "#6366F1" : "transparent",
+                color: section === s ? "#e2e8f0" : "#8B8FA3",
+                fontSize: 12, fontWeight: 500, padding: "8px 10px", borderRadius: 4,
                 cursor: "pointer", textAlign: "left", fontFamily: "inherit",
                 display: "flex", justifyContent: "space-between", alignItems: "center",
+                transition: "all 0.15s",
               }}
             >
               {s}
               {sectionCounts[s] > 0 && (
-                <span style={{ fontSize: 10, color: "#64748b", background: "#1e293b", borderRadius: 8, padding: "1px 6px" }}>
+                <span style={{ fontSize: 10, color: "#4A4E63", background: "rgba(255,255,255,0.04)", borderRadius: 8, padding: "1px 6px" }}>
                   {sectionCounts[s]}
                 </span>
               )}
             </button>
           ))}
         </div>
-        <div style={{ padding: 12, borderTop: "1px solid #1e293b" }}>
+        <div style={{ padding: 12, borderTop: "1px solid rgba(255,255,255,0.06)" }}>
           <button
             onClick={handleSave}
             style={{
               width: "100%", height: 36, borderRadius: 8, border: "none",
-              background: saved ? "linear-gradient(135deg, #22c55e, #16a34a)" : "linear-gradient(135deg, #3b82f6, #2563eb)",
+              background: saved ? "#22c55e" : "#6366F1",
               color: "#fff", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit",
               display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
               transition: "background 0.2s",
             }}
           >
-            {saved ? "✓ Saved!" : "Save Configuration"}
+            {saved ? "Saved" : "Save Configuration"}
           </button>
         </div>
       </div>
@@ -3135,14 +3140,14 @@ function ConfigurePanel({ cells, projectDuration, onConfigSave, onValidationChan
       <div style={{ flex: 1, overflowY: "auto", padding: 20 }}>
         {section === "Phases" && (
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            <div style={{ fontSize: 14, fontWeight: 600, color: "#e2e8f0", marginBottom: 4 }}>Construction Phases</div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: "#e2e8f0", marginBottom: 4 }}>Construction Phases</div>
             {config.phases.map((phase, idx) => (
               <PhaseCard key={phase.id} phase={phase} idx={idx}
                 onUpdate={updatePhase} onRemove={removePhase} />
             ))}
             <button onClick={addPhase} style={{
-              height: 36, borderRadius: 8, border: "1px dashed #1e293b", background: "transparent",
-              color: "#64748b", fontSize: 12, cursor: "pointer", fontFamily: "inherit",
+              height: 36, borderRadius: 6, border: "1px dashed rgba(255,255,255,0.08)", background: "transparent",
+              color: "#8B8FA3", fontSize: 12, cursor: "pointer", fontFamily: "inherit",
             }}>
               + Add Phase
             </button>
@@ -3151,14 +3156,14 @@ function ConfigurePanel({ cells, projectDuration, onConfigSave, onValidationChan
 
         {section === "Cranes" && (
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            <div style={{ fontSize: 14, fontWeight: 600, color: "#e2e8f0", marginBottom: 4 }}>Crane Configuration</div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: "#e2e8f0", marginBottom: 4 }}>Crane Configuration</div>
             {craneZones.length === 0 ? (
               <div style={{ ...cfgCard, color: "#64748b", fontSize: 13, textAlign: "center", padding: 32 }}>
                 Place crane zones on the site plan first
               </div>
             ) : (
               config.cranes.map((crane, idx) => (
-                <div key={crane.id} style={{ ...cfgCard, borderLeft: "3px solid #eab308" }}>
+                <div key={crane.id} style={{ ...cfgCard, borderLeft: "2px solid #eab308" }}>
                   <div style={{ fontSize: 12, fontWeight: 600, color: "#e2e8f0", marginBottom: 10 }}>
                     Crane at {posLabel(crane.x, crane.y)}
                   </div>
@@ -3208,9 +3213,9 @@ function ConfigurePanel({ cells, projectDuration, onConfigSave, onValidationChan
 
         {section === "Deliveries" && (
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            <div style={{ fontSize: 14, fontWeight: 600, color: "#e2e8f0", marginBottom: 4 }}>Delivery Schedule</div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: "#e2e8f0", marginBottom: 4 }}>Delivery Schedule</div>
             {config.deliveries.map((del, idx) => (
-              <div key={del.id} style={{ ...cfgCard, borderLeft: "3px solid #f97316", position: "relative" }}>
+              <div key={del.id} style={{ ...cfgCard, borderLeft: "2px solid #f97316", position: "relative" }}>
                 <button onClick={() => removeDelivery(idx)} style={{
                   position: "absolute", top: 8, right: 8, background: "none", border: "none",
                   color: "#475569", cursor: "pointer", fontSize: 14, fontFamily: "inherit",
@@ -3277,8 +3282,8 @@ function ConfigurePanel({ cells, projectDuration, onConfigSave, onValidationChan
               </div>
             ))}
             <button onClick={addDelivery} style={{
-              height: 36, borderRadius: 8, border: "1px dashed #1e293b", background: "transparent",
-              color: "#64748b", fontSize: 12, cursor: "pointer", fontFamily: "inherit",
+              height: 36, borderRadius: 6, border: "1px dashed rgba(255,255,255,0.08)", background: "transparent",
+              color: "#8B8FA3", fontSize: 12, cursor: "pointer", fontFamily: "inherit",
             }}>
               + Add Delivery
             </button>
@@ -3287,14 +3292,14 @@ function ConfigurePanel({ cells, projectDuration, onConfigSave, onValidationChan
 
         {section === "Workforce" && (
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            <div style={{ fontSize: 14, fontWeight: 600, color: "#e2e8f0", marginBottom: 4 }}>Workforce Planning</div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: "#e2e8f0", marginBottom: 4 }}>Workforce Planning</div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 12 }}>
               {config.phases.map((phase) => {
                 const wf = config.workforce[phase.id] || { total: 0 };
                 const trades = workforceTradesFor(phase.id);
                 const total = wf.total || 1;
                 return (
-                  <div key={phase.id} style={{ ...cfgCard, borderTop: `3px solid ${phase.color}` }}>
+                  <div key={phase.id} style={{ ...cfgCard, borderTop: `2px solid ${phase.color}` }}>
                     <div style={{ fontSize: 12, fontWeight: 600, color: "#e2e8f0", marginBottom: 10 }}>
                       {phase.name || phase.id}
                     </div>
@@ -3314,7 +3319,7 @@ function ConfigurePanel({ cells, projectDuration, onConfigSave, onValidationChan
                         </div>
                       ))}
                     </div>
-                    <div style={{ marginTop: 10, height: 8, borderRadius: 4, overflow: "hidden", display: "flex", background: "#1e293b" }}>
+                    <div style={{ marginTop: 10, height: 6, borderRadius: 3, overflow: "hidden", display: "flex", background: "rgba(255,255,255,0.04)" }}>
                       {trades.map((trade) => {
                         const val = wf[trade] || 0;
                         if (val === 0) return null;
@@ -3335,19 +3340,19 @@ function ConfigurePanel({ cells, projectDuration, onConfigSave, onValidationChan
 
         {section === "Equipment" && (
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            <div style={{ fontSize: 14, fontWeight: 600, color: "#e2e8f0", marginBottom: 4 }}>Equipment Management</div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: "#e2e8f0", marginBottom: 4 }}>Equipment Management</div>
             {config.equipment.map((eq, idx) => (
-              <div key={eq.id} style={{ ...cfgCard, borderLeft: "3px solid #06b6d4", position: "relative" }}>
+              <div key={eq.id} style={{ ...cfgCard, borderLeft: "2px solid #06b6d4", position: "relative" }}>
                 <button onClick={() => removeEquipment(idx)} style={{
                   position: "absolute", top: 8, right: 8, background: "none", border: "none",
                   color: "#475569", cursor: "pointer", fontSize: 14, fontFamily: "inherit",
                 }}>✕</button>
                 {(eq.type === "Excavator" || eq.type === "Concrete Pump") && (
                   <div style={{
-                    fontSize: 11, color: "#f59e0b", background: "#f59e0b15", border: "1px solid #f59e0b30",
-                    borderRadius: 6, padding: "4px 10px", marginBottom: 10, display: "inline-block",
+                    fontSize: 11, color: "#f59e0b", background: "rgba(245,158,11,0.06)", border: "1px solid rgba(245,158,11,0.1)",
+                    borderRadius: 4, padding: "4px 10px", marginBottom: 10, display: "inline-block",
                   }}>
-                    ⚠ High coordination required — schedule deliveries around this equipment
+                    High coordination required — schedule deliveries around this equipment
                   </div>
                 )}
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
@@ -3359,14 +3364,10 @@ function ConfigurePanel({ cells, projectDuration, onConfigSave, onValidationChan
                     </select>
                   </div>
                   <div>
-                    <div style={cfgLabel}>Position Zone</div>
-                    <select value={eq.zone} onChange={(e) => updateEquipment(idx, "zone", e.target.value)}
-                      style={{ ...cfgInput, width: "100%" }}>
-                      <option value="">Select...</option>
-                      {nonRoadZones.map((nz) => (
-                        <option key={nz.idx} value={nz.idx}>{nz.type} at {posLabel(nz.x, nz.y)}</option>
-                      ))}
-                    </select>
+                    <div style={cfgLabel}>GRID POSITION</div>
+                    <input value={eq.zone} onChange={(e) => updateEquipment(idx, "zone", e.target.value.toUpperCase())}
+                      placeholder="e.g. J12"
+                      style={{ ...cfgInput, width: "100%" }} />
                   </div>
                   <div>
                     <div style={cfgLabel}>Active Phase</div>
@@ -3396,8 +3397,8 @@ function ConfigurePanel({ cells, projectDuration, onConfigSave, onValidationChan
               </div>
             ))}
             <button onClick={addEquipment} style={{
-              height: 36, borderRadius: 8, border: "1px dashed #1e293b", background: "transparent",
-              color: "#64748b", fontSize: 12, cursor: "pointer", fontFamily: "inherit",
+              height: 36, borderRadius: 6, border: "1px dashed rgba(255,255,255,0.08)", background: "transparent",
+              color: "#8B8FA3", fontSize: 12, cursor: "pointer", fontFamily: "inherit",
             }}>
               + Add Equipment
             </button>
@@ -3406,11 +3407,11 @@ function ConfigurePanel({ cells, projectDuration, onConfigSave, onValidationChan
 
         {section === "Milestones" && (
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            <div style={{ fontSize: 14, fontWeight: 600, color: "#e2e8f0", marginBottom: 4 }}>Project Milestones</div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: "#e2e8f0", marginBottom: 4 }}>Project Milestones</div>
             {sortedMilestones.map((ms) => {
               const realIdx = config.milestones.findIndex((m) => m.id === ms.id);
               return (
-                <div key={ms.id} style={{ ...cfgCard, borderLeft: `3px solid ${milestoneColor(ms.type)}`, position: "relative" }}>
+                <div key={ms.id} style={{ ...cfgCard, borderLeft: `2px solid ${milestoneColor(ms.type)}`, position: "relative" }}>
                   <button onClick={() => removeMilestone(realIdx)} style={{
                     position: "absolute", top: 8, right: 8, background: "none", border: "none",
                     color: "#475569", cursor: "pointer", fontSize: 14, fontFamily: "inherit",
@@ -3451,8 +3452,8 @@ function ConfigurePanel({ cells, projectDuration, onConfigSave, onValidationChan
               );
             })}
             <button onClick={addMilestone} style={{
-              height: 36, borderRadius: 8, border: "1px dashed #1e293b", background: "transparent",
-              color: "#64748b", fontSize: 12, cursor: "pointer", fontFamily: "inherit",
+              height: 36, borderRadius: 6, border: "1px dashed rgba(255,255,255,0.08)", background: "transparent",
+              color: "#8B8FA3", fontSize: 12, cursor: "pointer", fontFamily: "inherit",
             }}>
               + Add Milestone
             </button>
@@ -3460,43 +3461,46 @@ function ConfigurePanel({ cells, projectDuration, onConfigSave, onValidationChan
         )}
 
         {/* ── Validation Panel ── */}
-        <div style={{ marginTop: 24, borderTop: "1px solid #1e293b", paddingTop: 16 }}>
+        <div style={{ marginTop: 24, borderTop: "1px solid rgba(255,255,255,0.06)", paddingTop: 16 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-            <span style={{ fontSize: 11, fontWeight: 700, color: "#64748b", letterSpacing: "0.06em" }}>PLAN VALIDATION</span>
+            <span style={{ fontSize: 10, fontWeight: 600, color: "#4A4E63", letterSpacing: "0.06em" }}>PLAN VALIDATION</span>
             {errorCount > 0 && (
               <span style={{
-                fontSize: 10, fontWeight: 700, color: "#fff", background: "#ef4444",
+                fontSize: 10, fontWeight: 600, color: "#ef4444", background: "rgba(239,68,68,0.1)",
                 borderRadius: 8, padding: "1px 7px", lineHeight: "16px",
+                border: "1px solid rgba(239,68,68,0.15)",
               }}>{errorCount} {errorCount === 1 ? "error" : "errors"}</span>
             )}
             {warningCount > 0 && (
               <span style={{
-                fontSize: 10, fontWeight: 700, color: "#000", background: "#eab308",
+                fontSize: 10, fontWeight: 600, color: "#eab308", background: "rgba(234,179,8,0.1)",
                 borderRadius: 8, padding: "1px 7px", lineHeight: "16px",
+                border: "1px solid rgba(234,179,8,0.15)",
               }}>{warningCount} {warningCount === 1 ? "warning" : "warnings"}</span>
             )}
           </div>
           {validationIssues.length === 0 ? (
             <div style={{
               ...cfgCard, display: "flex", alignItems: "center", gap: 8,
-              color: "#22c55e", fontSize: 13,
+              color: "#6B8F71", fontSize: 12,
             }}>
-              <span style={{ fontSize: 16 }}>✓</span> Plan looks good
+              <span style={{ fontSize: 14 }}>✓</span> Plan looks good
             </div>
           ) : (
             <div style={{ maxHeight: 220, overflowY: "auto", display: "flex", flexDirection: "column", gap: 4 }}>
               {validationIssues.map((issue, i) => (
                 <div key={i} style={{
                   ...cfgCard, display: "flex", alignItems: "flex-start", gap: 8,
-                  padding: "8px 12px", fontSize: 12, color: "#cbd5e1",
+                  padding: "8px 12px", fontSize: 12, color: "#b0b4c3",
                 }}>
                   <span style={{
-                    width: 8, height: 8, borderRadius: "50%", flexShrink: 0, marginTop: 4,
-                    background: issue.severity === "error" ? "#ef4444" : issue.severity === "warning" ? "#eab308" : "#3b82f6",
+                    width: 6, height: 6, borderRadius: "50%", flexShrink: 0, marginTop: 5,
+                    background: issue.severity === "error" ? "#ef4444" : issue.severity === "warning" ? "#eab308" : "#6366F1",
+                    opacity: 0.7,
                   }} />
                   <span style={{ flex: 1 }}>{issue.message}</span>
                   <span style={{
-                    fontSize: 9, color: "#475569", background: "#1e293b", borderRadius: 4,
+                    fontSize: 9, color: "#4A4E63", background: "rgba(255,255,255,0.04)", borderRadius: 4,
                     padding: "1px 6px", flexShrink: 0, textTransform: "uppercase", letterSpacing: "0.04em",
                   }}>{issue.section}</span>
                 </div>
@@ -3512,16 +3516,16 @@ function ConfigurePanel({ cells, projectDuration, onConfigSave, onValidationChan
 function PhaseCard({ phase, idx, onUpdate, onRemove }) {
   const [pickerOpen, setPickerOpen] = useState(false);
   return (
-    <div style={{ ...cfgCard, borderLeft: `3px solid ${phase.color}`, display: "flex", alignItems: "center", gap: 12, position: "relative" }}>
+    <div style={{ ...cfgCard, borderLeft: `2px solid ${phase.color}`, display: "flex", alignItems: "center", gap: 12, position: "relative" }}>
       <div style={{ position: "relative" }}>
         <div
           onClick={() => setPickerOpen(!pickerOpen)}
-          style={{ width: 24, height: 24, borderRadius: 6, background: phase.color, cursor: "pointer", border: "2px solid #1e293b" }}
+          style={{ width: 24, height: 24, borderRadius: 6, background: phase.color, cursor: "pointer", border: "2px solid rgba(255,255,255,0.06)" }}
         />
         {pickerOpen && (
           <div style={{
-            position: "absolute", top: 30, left: 0, zIndex: 10, background: "#0f1520",
-            border: "1px solid #1e293b", borderRadius: 8, padding: 8,
+            position: "absolute", top: 30, left: 0, zIndex: 10, background: "#1A1D2B",
+            border: "1px solid rgba(255,255,255,0.06)", borderRadius: 6, padding: 8,
             display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 4,
           }}>
             {PRESET_COLORS.map((c) => (
@@ -3561,67 +3565,57 @@ const S = {
     height: "100vh",
     display: "flex",
     flexDirection: "column",
-    background: "#060a14",
+    background: "#0F1117",
     color: "#e2e8f0",
     overflow: "hidden",
   },
 
-  /* Nav */
   nav: {
-    height: 56,
+    height: 52,
     display: "flex",
     alignItems: "center",
     justifyContent: "space-between",
     padding: "0 24px",
-    background: "#0f1520",
-    borderBottom: "1px solid #1e293b",
+    background: "#0F1117",
+    borderBottom: "1px solid rgba(255,255,255,0.06)",
     flexShrink: 0,
   },
   navLeft: { display: "flex", alignItems: "center", gap: 10 },
   logoBox: {
-    width: 30,
-    height: 30,
-    borderRadius: 7,
-    background: "linear-gradient(135deg, #3b82f6, #1d4ed8)",
+    width: 28,
+    height: 28,
+    borderRadius: 6,
+    background: "#6366F1",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: 800,
     color: "#fff",
   },
   logoText: {
-    fontSize: 19,
-    fontWeight: 700,
-    color: "#60a5fa",
-    letterSpacing: "-0.03em",
+    fontSize: 16,
+    fontWeight: 600,
+    color: "#ffffff",
+    letterSpacing: "-0.02em",
   },
   badge: {
-    fontSize: 9,
-    fontWeight: 700,
-    color: "#0f172a",
-    background: "#3b82f6",
-    padding: "2px 7px",
-    borderRadius: 4,
-    letterSpacing: "0.08em",
+    fontSize: 11,
+    fontWeight: 500,
+    color: "#8B8FA3",
+    letterSpacing: "0",
   },
-  navCenter: { display: "flex", alignItems: "center", gap: 4 },
-  navRight: { display: "flex", alignItems: "center", gap: 14 },
-  liveGroup: { display: "flex", alignItems: "center", gap: 6 },
-  liveDot: {
-    width: 8,
-    height: 8,
-    borderRadius: "50%",
-    background: "#22c55e",
-    animation: "pulse-live 2s infinite",
-  },
-  navDivider: { width: 1, height: 24, background: "#1e293b" },
+  navCenter: { display: "flex", alignItems: "center", gap: 2 },
+  navRight: { display: "flex", alignItems: "center", gap: 12 },
+  liveGroup: { display: "none" },
+  liveDot: { display: "none" },
+  navDivider: { width: 1, height: 20, background: "rgba(255,255,255,0.06)" },
   logoutBtn: {
     fontSize: 12,
-    fontWeight: 600,
-    color: "#ef4444",
-    background: "#ef444415",
-    border: "1px solid #ef444430",
+    fontWeight: 500,
+    color: "#8B8FA3",
+    background: "transparent",
+    border: "none",
     borderRadius: 6,
     padding: "5px 12px",
     cursor: "pointer",
@@ -3629,7 +3623,6 @@ const S = {
     transition: "all 0.15s",
   },
 
-  /* Main Layout */
   main: { flex: 1, display: "flex", overflow: "hidden" },
   leftCol: {
     flex: "0 0 65%",
@@ -3641,43 +3634,42 @@ const S = {
     flex: "0 0 35%",
     display: "flex",
     flexDirection: "column",
-    borderLeft: "1px solid #1e293b",
-    background: "#0d1117",
+    borderLeft: "1px solid rgba(255,255,255,0.06)",
+    background: "#0F1117",
   },
 
-  /* Toolbar */
   toolbar: {
     display: "flex",
     alignItems: "center",
-    gap: 8,
-    padding: "12px 20px",
-    borderBottom: "1px solid #1e293b",
-    background: "#0b1120",
+    gap: 6,
+    padding: "10px 20px",
+    borderBottom: "1px solid rgba(255,255,255,0.06)",
+    background: "#0F1117",
     flexShrink: 0,
   },
   sectionLabel: {
     fontSize: 10,
-    fontWeight: 700,
-    color: "#334155",
-    letterSpacing: "0.12em",
-    marginRight: 6,
+    fontWeight: 600,
+    color: "#4A4E63",
+    letterSpacing: "0.1em",
+    marginRight: 4,
   },
   toolBtn: {
     display: "flex",
     alignItems: "center",
     gap: 6,
-    padding: "7px 13px",
-    borderRadius: 7,
-    border: "1.5px solid #1e293b",
+    padding: "5px 10px",
+    borderRadius: 5,
+    border: "1px solid transparent",
     fontSize: 12,
     fontWeight: 500,
     cursor: "pointer",
     transition: "all 0.15s ease",
     fontFamily: "inherit",
+    background: "transparent",
   },
   zoneCounter: { display: "flex", alignItems: "center" },
 
-  /* Grid */
   gridArea: {
     flex: 1,
     display: "flex",
@@ -3685,7 +3677,7 @@ const S = {
     alignItems: "center",
     justifyContent: "center",
     padding: 8,
-    background: "#080c18",
+    background: "#12141E",
     gap: 6,
   },
   gridHeader: {
@@ -3704,9 +3696,9 @@ const S = {
   colLabel: {
     textAlign: "center",
     fontSize: 10,
-    color: "#334155",
+    color: "#4A4E63",
     fontFamily: "monospace",
-    fontWeight: 600,
+    fontWeight: 500,
   },
   rowLabelCol: {
     display: "flex",
@@ -3720,9 +3712,9 @@ const S = {
     justifyContent: "flex-end",
     width: 18,
     fontSize: 10,
-    color: "#334155",
+    color: "#4A4E63",
     fontFamily: "monospace",
-    fontWeight: 600,
+    fontWeight: 500,
     paddingRight: 4,
   },
   legend: {
@@ -3737,71 +3729,70 @@ const S = {
     gap: 5,
   },
 
-  /* Timeline */
   timeline: {
-    height: 72,
+    height: 56,
     display: "flex",
     alignItems: "center",
-    gap: 16,
+    gap: 14,
     padding: "0 24px",
-    background: "#0f1520",
-    borderTop: "1px solid #1e293b",
+    background: "#0F1117",
+    borderTop: "1px solid rgba(255,255,255,0.06)",
     flexShrink: 0,
   },
   playBtn: {
-    width: 42,
-    height: 42,
+    width: 34,
+    height: 34,
     borderRadius: "50%",
-    border: "none",
-    color: "#fff",
-    fontSize: 15,
+    border: "1px solid rgba(255,255,255,0.06)",
+    color: "#e2e8f0",
+    fontSize: 13,
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
     cursor: "pointer",
     transition: "all 0.2s ease",
     flexShrink: 0,
+    background: "transparent",
   },
   dayInfo: {
     display: "flex",
     flexDirection: "column",
     gap: 1,
-    minWidth: 64,
+    minWidth: 56,
     flexShrink: 0,
   },
   durationPicker: {
     display: "flex",
     alignItems: "center",
-    background: "#0c1221",
-    borderRadius: 7,
-    border: "1px solid #1e293b",
-    padding: 2,
-    gap: 2,
+    background: "transparent",
+    borderRadius: 5,
+    border: "none",
+    padding: 0,
+    gap: 1,
     flexShrink: 0,
   },
   durationBtn: {
     fontSize: 11,
-    fontWeight: 600,
-    color: "#475569",
+    fontWeight: 500,
+    color: "#4A4E63",
     background: "transparent",
     border: "none",
-    borderRadius: 5,
-    padding: "4px 8px",
+    borderRadius: 4,
+    padding: "3px 7px",
     cursor: "pointer",
     fontFamily: "inherit",
     transition: "all 0.15s ease",
     lineHeight: 1,
   },
   durationBtnActive: {
-    background: "#1d4ed8",
     color: "#e2e8f0",
-    boxShadow: "0 0 8px #3b82f630",
+    background: "rgba(99,102,241,0.15)",
   },
   progressWrapper: {
     flex: 1,
     display: "flex",
     flexDirection: "column",
-    gap: 6,
+    gap: 4,
     position: "relative",
     minWidth: 0,
   },
@@ -3811,70 +3802,64 @@ const S = {
   },
   progressTrack: {
     width: "100%",
-    height: 6,
-    background: "#1e293b",
-    borderRadius: 3,
+    height: 2,
+    background: "rgba(255,255,255,0.06)",
+    borderRadius: 1,
     overflow: "hidden",
     position: "relative",
   },
   progressFill: {
     height: "100%",
-    borderRadius: 3,
-    background: "linear-gradient(90deg, #3b82f6, #60a5fa)",
+    borderRadius: 1,
+    background: "#6366F1",
     transition: "width 0.12s linear",
-    boxShadow: "0 0 10px #3b82f630",
   },
   pctDisplay: {
     display: "flex",
     flexDirection: "column",
     alignItems: "flex-end",
     flexShrink: 0,
-    minWidth: 56,
+    minWidth: 48,
   },
 
-  /* Chat */
   chatHeader: {
     padding: "16px 20px",
-    borderBottom: "1px solid #1e293b",
+    borderBottom: "1px solid rgba(255,255,255,0.06)",
     display: "flex",
     alignItems: "center",
     gap: 12,
     flexShrink: 0,
-    background: "#0f1520",
+    background: "#0F1117",
   },
   avatar: {
-    width: 40,
-    height: 40,
-    borderRadius: 10,
-    background: "linear-gradient(135deg, #1e3a5f, #1e293b)",
+    width: 36,
+    height: 36,
+    borderRadius: 8,
+    background: "#6366F1",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: 700,
-    color: "#60a5fa",
-    border: "1.5px solid #334155",
+    color: "#fff",
     letterSpacing: "0.02em",
   },
   onlineBadge: {
-    marginLeft: "auto",
-    display: "flex",
-    alignItems: "center",
-    gap: 5,
+    display: "none",
   },
   quickActions: {
     display: "flex",
     gap: 6,
     padding: "10px 20px",
-    borderBottom: "1px solid #1e293b",
+    borderBottom: "1px solid rgba(255,255,255,0.06)",
     flexShrink: 0,
   },
   quickBtn: {
     fontSize: 11,
     fontWeight: 500,
-    color: "#64748b",
-    background: "#1e293b",
-    border: "1px solid #334155",
+    color: "#8B8FA3",
+    background: "transparent",
+    border: "1px solid rgba(255,255,255,0.06)",
     padding: "5px 12px",
     borderRadius: 6,
     cursor: "pointer",
@@ -3891,19 +3876,19 @@ const S = {
   },
   chatInput: {
     padding: "12px 16px",
-    borderTop: "1px solid #1e293b",
+    borderTop: "1px solid rgba(255,255,255,0.06)",
     display: "flex",
     gap: 8,
     flexShrink: 0,
-    background: "#0f1520",
+    background: "#0F1117",
   },
   input: {
     flex: 1,
-    height: 42,
+    height: 40,
     padding: "0 14px",
     borderRadius: 8,
-    background: "#0c1221",
-    border: "1px solid #1e293b",
+    background: "transparent",
+    border: "1px solid rgba(255,255,255,0.06)",
     color: "#e2e8f0",
     fontSize: 13,
     outline: "none",
@@ -3911,17 +3896,17 @@ const S = {
     transition: "border-color 0.15s, box-shadow 0.15s",
   },
   sendBtn: {
-    width: 42,
-    height: 42,
+    width: 40,
+    height: 40,
     borderRadius: 8,
-    background: "linear-gradient(135deg, #3b82f6, #2563eb)",
-    border: "none",
-    color: "#fff",
+    background: "transparent",
+    border: "1px solid rgba(255,255,255,0.06)",
+    color: "#8B8FA3",
     cursor: "pointer",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
-    transition: "opacity 0.15s",
+    transition: "all 0.15s",
     flexShrink: 0,
   },
 };

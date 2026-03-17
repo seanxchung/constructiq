@@ -101,6 +101,7 @@ class SaveProjectRequest(BaseModel):
     name: str = Field(..., min_length=1, description="Project name")
     zones: list[dict[str, Any]] = Field(..., description="Zone layout from the frontend board")
     project_duration: int = Field(..., ge=1, description="Total project duration in days")
+    config: Optional[dict[str, Any]] = Field(None, description="Full configure-tab state (phases, cranes, deliveries, workforce, equipment, milestones)")
 
 
 class LoadProjectRequest(BaseModel):
@@ -210,7 +211,13 @@ def save_project(req: SaveProjectRequest):
         "project_duration": req.project_duration,
         "zone_count": len(req.zones),
     }
-    response = supabase.table("projects").insert(row).execute()
+    if req.config is not None:
+        row["config"] = req.config
+    try:
+        response = supabase.table("projects").insert(row).execute()
+    except Exception:
+        row.pop("config", None)
+        response = supabase.table("projects").insert(row).execute()
     if not response.data:
         raise HTTPException(status_code=500, detail="Failed to save project")
     return response.data[0]
