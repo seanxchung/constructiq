@@ -18,7 +18,8 @@ const ZONES = [
   { id: "manlift", label: "Man Lift", emoji: "🔧", color: "#06b6d4", bg: "#06b6d415" },
   { id: "delivery", label: "Delivery Zone", emoji: "🚛", color: "#84cc16", bg: "#84cc1615" },
   { id: "boundary", label: "Site Boundary", emoji: "🚫", color: "#ef4444", bg: "#ef444415" },
-  { id: "truck_staging", label: "Truck Staging", emoji: "🚛", color: "#84cc16", bg: "#84cc1615" },
+  { id: "truck_staging", label: "Truck Staging", emoji: "🅿️", color: "#84cc16", bg: "#84cc1615" },
+  { id: "eraser", label: "Eraser", emoji: "🗑️", color: "#ef4444", bg: "#ef444415" },
 ];
 
 const ZONE_SIZES = {
@@ -34,6 +35,7 @@ const ZONE_SIZES = {
   delivery: { w: 3, h: 2 },
   boundary: { w: 1, h: 1 },
   truck_staging: { w: 3, h: 2 },
+  eraser: { w: 1, h: 1 },
 };
 
 const GRID = 30;
@@ -173,12 +175,34 @@ export default function Home() {
   const [optimizerOpen, setOptimizerOpen] = useState(false);
   const [optimizerLoading, setOptimizerLoading] = useState(false);
   const [optimizerResult, setOptimizerResult] = useState(null);
-  const [conflictPaused, setConflictPaused] = useState(false);
+
   const [projectsModalOpen, setProjectsModalOpen] = useState(false);
   const [savedProjects, setSavedProjects] = useState([]);
   const [projectNameInput, setProjectNameInput] = useState("");
   const [optimizerWorkers, setOptimizerWorkers] = useState(0);
   const [projectConfig, setProjectConfig] = useState(null);
+  const [savedConfig, setSavedConfig] = useState({
+    phases: [
+      { id: "site-prep", name: "Site Preparation", startDay: 1, endDay: 10, color: "#64748b" },
+      { id: "foundation", name: "Foundation", startDay: 11, endDay: 30, color: "#3b82f6" },
+      { id: "structural", name: "Structural", startDay: 31, endDay: 60, color: "#8b5cf6" },
+      { id: "mep", name: "MEP", startDay: 61, endDay: 75, color: "#f59e0b" },
+      { id: "finishing", name: "Finishing", startDay: 76, endDay: 88, color: "#22c55e" },
+      { id: "closeout", name: "Closeout", startDay: 89, endDay: 90, color: "#ef4444" },
+    ],
+    cranes: [],
+    deliveries: [],
+    workforce: {
+      "site-prep": { total: 10, laborers: 8, operators: 2 },
+      foundation: { total: 25, laborers: 12, carpenters: 8, ironworkers: 3, operators: 2 },
+      structural: { total: 55, laborers: 10, carpenters: 5, ironworkers: 30, operators: 10 },
+      mep: { total: 40, laborers: 5, electricians: 15, plumbers: 15, operators: 5 },
+      finishing: { total: 25, laborers: 8, carpenters: 8, painters: 7, operators: 2 },
+      closeout: { total: 10, laborers: 8, operators: 2 },
+    },
+    equipment: [],
+    milestones: [],
+  });
   const [configErrorCount, setConfigErrorCount] = useState(0);
   const [activeTrucks, setActiveTrucks] = useState([]);
   const scrollRef = useRef(null);
@@ -188,6 +212,9 @@ export default function Home() {
   const dragRef = useRef(null);
   const gridRef = useRef(null);
   const isPaintingRef = useRef(false);
+  const prevConflictTypesRef = useRef(new Set());
+  const prevPhaseRef = useRef("");
+  const debriefFiredRef = useRef(false);
 
   const triggerAlert = () => {
     setHasNewAlert(true);
@@ -252,17 +279,66 @@ export default function Home() {
             scheduleRisk: data.simulation?.schedule?.schedule_risk,
           }]);
         }
-        const hasHigh = (data?.conflicts || []).some((c) => c.severity === "HIGH");
-        if (hasHigh && data.ai_analysis) {
-          setMessages((m) => [...m, { role: "ai", text: data.ai_analysis }]);
-          triggerAlert();
-          setIsPlaying(false);
-          setConflictPaused(true);
+        const conflicts = data?.conflicts || [];
+        const hasHigh = conflicts.some((c) => c.severity === "HIGH");
+        if (hasHigh) triggerAlert();
+
+        if (data?.ai_analysis) {
+          const currentTypes = new Set(conflicts.map((c) => c.type).filter(Boolean));
+          const prevTypes = prevConflictTypesRef.current;
+          const hasNewType = [...currentTypes].some((t) => !prevTypes.has(t));
+          const hasHighConflict = conflicts.some((c) => c.severity === "HIGH");
+          const materialLow = Object.values(data.simulation?.materials || {}).some((m) => m.pct_remaining < 20);
+          const hasBreakdown = conflicts.some((c) => c.type === "equipment_risk");
+
+          if (hasNewType || hasHighConflict || materialLow || hasBreakdown) {
+            setMessages((m) => [...m, { role: "ai", text: `**Day ${day}:** ${data.ai_analysis}` }]);
+          }
+          prevConflictTypesRef.current = currentTypes;
         }
+
+        if (data.simulation?.phase && data.simulation.phase !== prevPhaseRef.current && prevPhaseRef.current !== "") {
+          setMessages((m) => [...m, {
+            role: "ai",
+            text: `**Day ${day} — Phase Transition:** Moving into ${data.simulation.phase} phase. Crew composition and equipment requirements are shifting.`,
+          }]);
+        }
+        prevPhaseRef.current = data.simulation?.phase || "";
       })
       .catch(() => {})
       .finally(() => { simulatingRef.current = false; });
   }, [day, isPlaying, projectDuration]);
+
+  useEffect(() => {
+    if (day < projectDuration || analytics.length === 0) return;
+    if (debriefFiredRef.current) return;
+    debriefFiredRef.current = true;
+
+    fetch(`${API_BASE}/api/ai/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        message: `Give me a complete project debrief for this ${projectDuration}-day simulation`,
+        day,
+        zones: buildZones(),
+        project_duration: projectDuration,
+        current_conflicts: simConflicts,
+        analytics,
+      }),
+    })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data?.reply) {
+          setMessages((m) => [...m, { role: "ai", text: `**Day ${projectDuration} — Project Complete**\n\n${data.reply}` }]);
+        }
+      })
+      .catch(() => {
+        setMessages((m) => [...m, {
+          role: "ai",
+          text: "Simulation complete. Unable to generate AI debrief — please check that the backend is running.",
+        }]);
+      });
+  }, [day, projectDuration]);
 
   // Spawn delivery trucks when day matches a scheduled delivery day
   useEffect(() => {
@@ -292,6 +368,10 @@ export default function Home() {
     });
     if (newTrucks.length > 0) {
       setActiveTrucks((prev) => [...prev.filter((t) => t.day !== day), ...newTrucks]);
+      setMessages((m) => [...m, {
+        role: "ai",
+        text: `**Day ${day}:** ${newTrucks.length} delivery truck${newTrucks.length !== 1 ? "s" : ""} inbound. Materials en route to site.`,
+      }]);
     }
   }, [day, projectConfig, isPlaying, cells]);
 
@@ -339,13 +419,14 @@ export default function Home() {
     if (dur === projectDuration) return;
     setProjectDuration(dur);
     setIsPlaying(false);
-    setConflictPaused(false);
     setDay(1);
     setAnalytics([]);
     setMessages([...INITIAL_MESSAGES]);
     setSimulationState(null);
     setSimConflicts([]);
     setActiveTrucks([]);
+    prevConflictTypesRef.current = new Set();
+    debriefFiredRef.current = false;
   };
 
   const buildZones = () =>
@@ -364,8 +445,26 @@ export default function Home() {
       return acc;
     }, []);
 
-  const placeZone = (i) => {
-    if (!activeTool) return;
+    const placeZone = (i) => {
+      if (!activeTool) return;
+      
+      if (activeTool === 'eraser') {
+        setCells((prev) => {
+          const next = [...prev];
+          const cell = prev[i];
+          if (!cell) return prev;
+          const originIdx = cell.ref !== undefined ? cell.ref : i;
+          const origin = next[originIdx];
+          if (!origin) return prev;
+          if (origin.id === 'boundary') return prev; // protect boundary from eraser
+          next[originIdx] = null;
+          for (let idx = 0; idx < next.length; idx++) {
+            if (next[idx] && next[idx].ref === originIdx) next[idx] = null;
+          }
+          return next;
+        });
+        return;
+      }
     setCells((prev) => {
       const next = [...prev];
       const zone = ZONES.find((z) => z.id === activeTool);
@@ -433,13 +532,15 @@ export default function Home() {
 
   const rewind = () => {
     setIsPlaying(false);
-    setConflictPaused(false);
     setDay(1);
     setMessages([...INITIAL_MESSAGES]);
     setAnalytics([]);
     setSimulationState(null);
     setSimConflicts([]);
     setActiveTrucks([]);
+    prevConflictTypesRef.current = new Set();
+    prevPhaseRef.current = "";
+    debriefFiredRef.current = false;
   };
 
   const skipDays = (n) => {
@@ -466,11 +567,31 @@ export default function Home() {
             scheduleRisk: data.simulation?.schedule?.schedule_risk,
           }]);
         }
-        const hasHigh = (data?.conflicts || []).some((c) => c.severity === "HIGH");
-        if (data?.conflicts?.length > 0 && data.ai_analysis) {
-          setMessages((m) => [...m, { role: "ai", text: data.ai_analysis }]);
-          if (hasHigh) triggerAlert();
+        const conflicts = data?.conflicts || [];
+        const hasHigh = conflicts.some((c) => c.severity === "HIGH");
+        if (hasHigh) triggerAlert();
+
+        if (data?.ai_analysis) {
+          const currentTypes = new Set(conflicts.map((c) => c.type).filter(Boolean));
+          const prevTypes = prevConflictTypesRef.current;
+          const hasNewType = [...currentTypes].some((t) => !prevTypes.has(t));
+          const hasHighConflict = conflicts.some((c) => c.severity === "HIGH");
+          const materialLow = Object.values(data.simulation?.materials || {}).some((m) => m.pct_remaining < 20);
+          const hasBreakdown = conflicts.some((c) => c.type === "equipment_risk");
+
+          if (hasNewType || hasHighConflict || materialLow || hasBreakdown) {
+            setMessages((m) => [...m, { role: "ai", text: data.ai_analysis }]);
+          }
+          prevConflictTypesRef.current = currentTypes;
         }
+
+        if (data.simulation?.phase && data.simulation.phase !== prevPhaseRef.current && prevPhaseRef.current !== "") {
+          setMessages((m) => [...m, {
+            role: "ai",
+            text: `**Day ${target} — Phase Transition:** Moving into ${data.simulation.phase} phase. Crew composition and equipment requirements are shifting.`,
+          }]);
+        }
+        prevPhaseRef.current = data.simulation?.phase || "";
       })
       .catch(() => {})
       .finally(() => { skipInProgressRef.current = false; });
@@ -479,7 +600,6 @@ export default function Home() {
   const clearSite = () => {
     setCells(Array(GRID * GRID).fill(null));
     setIsPlaying(false);
-    setConflictPaused(false);
     setDay(1);
     setAnalytics([]);
     setMessages([...INITIAL_MESSAGES]);
@@ -487,13 +607,16 @@ export default function Home() {
     setSimConflicts([]);
     setOptimizerWorkers(0);
     setActiveTrucks([]);
+    prevConflictTypesRef.current = new Set();
+    prevPhaseRef.current = "";
+    debriefFiredRef.current = false;
   };
 
   const handleResizeMove = (e) => {
     if (!dragRef.current) return;
     const { originIndex, startX, startY, origW, origH } = dragRef.current;
-    const deltaX = Math.round((e.clientX - startX) / 28);
-    const deltaY = Math.round((e.clientY - startY) / 28);
+    const deltaX = Math.round((e.clientX - startX) / 34);
+    const deltaY = Math.round((e.clientY - startY) / 34);
     let newW = Math.max(1, origW + deltaX);
     let newH = Math.max(1, origH + deltaY);
     const ox = originIndex % GRID;
@@ -583,7 +706,6 @@ export default function Home() {
 
       setCells(next);
       setIsPlaying(false);
-      setConflictPaused(false);
       setDay(1);
       setAnalytics([]);
       setSimulationState(null);
@@ -668,7 +790,6 @@ export default function Home() {
       setCells(next);
       if (data.project_duration) setProjectDuration(data.project_duration);
       setIsPlaying(false);
-      setConflictPaused(false);
       setDay(1);
       setAnalytics([]);
       setSimulationState(null);
@@ -765,7 +886,7 @@ export default function Home() {
       }
       if (best < 0) return null;
       const [rx, ry] = cellXY(best);
-      return { x1: rx * 28 + 14, y1: ry * 28 + 14, x2: mx * 28 + 14, y2: my * 28 + 14 };
+      return { x1: rx * 34 + 17, y1: ry * 34 + 17, x2: mx * 34 + 17, y2: my * 34 + 17 };
     })
     .filter(Boolean);
 
@@ -923,7 +1044,7 @@ export default function Home() {
                   style={{
                     display: "grid",
                     gridTemplateColumns: `repeat(${GRID}, 1fr)`,
-                    width: GRID * 28,
+                    width: GRID * 34,
                     border: "1px solid #1e293b",
                     borderRadius: 8,
                     overflow: "hidden",
@@ -965,8 +1086,8 @@ export default function Home() {
                           onMouseEnter={() => setHoveredCell(i)}
                           onMouseLeave={() => setHoveredCell(-1)}
                           style={{
-                            width: 28,
-                            height: 28,
+                            width: 34,
+                            height: 34,
                             background: (originZone?.color || "#64748b") + "1a",
                             borderRight: "1px solid #1e293b30",
                             borderBottom: "1px solid #1e293b30",
@@ -995,18 +1116,20 @@ export default function Home() {
                     let cellBorderL = undefined;
                     let cellBorderT = undefined;
                     let cellAnim = undefined;
+                    let cellBoxShadow = undefined;
                     let content = null;
 
                     if (cell?.id === "building") {
                       const stage = getBuildingStage(buildPct);
                       cellBg = stage.bg;
-                      const bdr = `1.5px ${stage.dashed ? "dashed" : "solid"} ${stage.border}`;
+                      const bdr = `2px ${stage.dashed ? "dashed" : "solid"} ${stage.border}`;
                       cellBorderR = bdr;
                       cellBorderB = bdr;
+                      cellBoxShadow = `0 0 12px ${stage.border}40`;
                       content = (
                         <>
                           <span style={{ fontSize: 15, lineHeight: 1 }}>{cell.emoji}</span>
-                          <span style={{ fontSize: 7, fontWeight: 700, color: stage.border, lineHeight: 1, marginTop: 1 }}>
+                          <span style={{ fontSize: 8, fontWeight: 700, color: stage.border, lineHeight: 1, marginTop: 1 }}>
                             {stage.label}
                           </span>
                           <div style={{ position: "absolute", bottom: 3, left: 5, right: 5, height: 2, background: "#0c122180", borderRadius: 1 }}>
@@ -1174,9 +1297,12 @@ export default function Home() {
                     return (
                       <div
                         key={i}
-                        onClick={() => placeZone(i)}
+                        onClick={() => {
+                          if (activeTool === 'road' || activeTool === 'boundary' || activeTool === 'fence' || activeTool === 'eraser') return;
+                          placeZone(i);
+                        }}
                         onMouseDown={() => {
-                          if (activeTool === 'road' || activeTool === 'boundary' || activeTool === 'fence') {
+                          if (activeTool === 'road' || activeTool === 'boundary' || activeTool === 'fence' || activeTool === 'eraser') {
                             isPaintingRef.current = true;
                             placeZone(i);
                           }
@@ -1187,8 +1313,8 @@ export default function Home() {
                         }}
                         onMouseLeave={() => setHoveredCell(-1)}
                         style={{
-                          width: 28,
-                          height: 28,
+                          width: 34,
+                          height: 34,
                           display: "flex",
                           flexDirection: "column",
                           alignItems: "center",
@@ -1199,9 +1325,10 @@ export default function Home() {
                           ...(cellBorderL ? { borderLeft: cellBorderL } : {}),
                           ...(cellBorderT ? { borderTop: cellBorderT } : {}),
                           cursor: activeTool ? "crosshair" : "default",
-                          transition: "background 0.15s, border-color 0.15s",
+                          transition: "background 0.15s, border-color 0.15s, box-shadow 0.3s",
                           position: "relative",
                           animation: cellAnim,
+                          ...(cellBoxShadow ? { boxShadow: cellBoxShadow } : {}),
                         }}
                       >
                         {content}
@@ -1253,7 +1380,7 @@ export default function Home() {
                   <svg
                     style={{
                       position: "absolute", top: 0, left: 0,
-                      width: GRID * 28, height: GRID * 28,
+                      width: GRID * 34, height: GRID * 34,
                       pointerEvents: "none",
                     }}
                   >
@@ -1277,8 +1404,8 @@ export default function Home() {
                   const isBlocked = blockedIdx >= 0 && pathPos >= blockedIdx;
                   const effectivePos = isBlocked ? blockedIdx : pathPos;
                   const ci = path[effectivePos];
-                  const tx = (ci % GRID) * 28;
-                  const ty = Math.floor(ci / GRID) * 28;
+                  const tx = (ci % GRID) * 34;
+                  const ty = Math.floor(ci / GRID) * 34;
 
                   return (
                     <div
@@ -1287,8 +1414,8 @@ export default function Home() {
                         position: "absolute",
                         left: tx,
                         top: ty,
-                        width: 28,
-                        height: 28,
+                        width: 34,
+                        height: 34,
                         display: "flex",
                         alignItems: "center",
                         justifyContent: "center",
@@ -1310,6 +1437,28 @@ export default function Home() {
                     </div>
                   );
                 })}
+                {simulationState && (
+                  <div style={{
+                    position: 'absolute', top: 8, right: 8,
+                    background: '#0f152099', backdropFilter: 'blur(8px)',
+                    border: '1px solid #1e293b', borderRadius: 10,
+                    padding: '10px 14px', zIndex: 30, minWidth: 160,
+                    display: 'flex', flexDirection: 'column', gap: 6,
+                  }}>
+                    <div style={{ fontSize: 10, fontWeight: 700, color: '#475569', letterSpacing: '0.08em' }}>LIVE SITE STATUS</div>
+                    {[
+                      { label: 'Phase', value: simulationState.phase?.replace(/_/g, ' ').toUpperCase(), color: '#60a5fa' },
+                      { label: 'Workers On Site', value: simulationState.total_workers, color: '#3b82f6' },
+                      { label: 'Active Tasks', value: simulationState.active_tasks?.length || 0, color: '#22c55e' },
+                      { label: 'Today Risk', value: '$' + (simConflicts.reduce((s,c) => s + (c.cost_impact||0), 0)).toLocaleString(), color: simConflicts.some(c => c.severity === 'HIGH') ? '#ef4444' : '#f59e0b' },
+                    ].map(({ label, value, color }) => (
+                      <div key={label} style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+                        <span style={{ fontSize: 11, color: '#64748b' }}>{label}</span>
+                        <span style={{ fontSize: 11, fontWeight: 700, color }}>{value}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
 
@@ -1334,111 +1483,10 @@ export default function Home() {
           ) : activeTab === "schedule" ? (
             <ScheduleView analytics={analytics} day={day} currentPhase={currentPhase} projectDuration={projectDuration} ganttPhases={ganttPhases} />
           ) : activeTab === "configure" ? (
-            <ConfigurePanel cells={cells} projectDuration={projectDuration} onConfigSave={setProjectConfig} onValidationChange={setConfigErrorCount} />
+            <ConfigurePanel cells={cells} projectDuration={projectDuration} onConfigSave={setProjectConfig} onValidationChange={setConfigErrorCount} config={savedConfig} onConfigChange={setSavedConfig} />
           ) : (
             <AnalyticsDashboard analytics={analytics} />
           )}
-
-          {/* Cascade Impact Panel */}
-          {conflictPaused && !isPlaying && (() => {
-            const cascadeConflicts = simConflicts.filter(
-              (c) => (c.schedule_impact_days || 0) > 0 || (c.cost_impact || 0) > 5000
-            );
-            if (cascadeConflicts.length === 0) return null;
-            const totalDays = cascadeConflicts.reduce((s, c) => s + (c.schedule_impact_days || 0), 0);
-            const totalCost = cascadeConflicts.reduce((s, c) => s + (c.cost_impact || 0), 0);
-            const fmtUsd = (v) => "$" + v.toLocaleString("en-US");
-            const typeLabel = (t) => t.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
-            return (
-              <div style={{
-                maxHeight: 120,
-                background: "#0f1520",
-                border: "1px solid #ef444420",
-                borderLeft: "3px solid #ef4444",
-                display: "flex",
-                flexDirection: "column",
-                flexShrink: 0,
-                overflow: "hidden",
-              }}>
-                <div style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  padding: "6px 16px",
-                  borderBottom: "1px solid #1e293b",
-                  flexShrink: 0,
-                }}>
-                  <span style={{ fontSize: 11, fontWeight: 700, color: "#ef4444", letterSpacing: "0.06em" }}>
-                    {"⚠️"} CASCADE IMPACT — DAY {day}
-                  </span>
-                  <button
-                    onClick={() => { setIsPlaying(true); setConflictPaused(false); }}
-                    style={{
-                      fontSize: 11, fontWeight: 600, color: "#fff",
-                      background: "linear-gradient(135deg, #3b82f6, #2563eb)",
-                      border: "none", borderRadius: 5, padding: "4px 12px",
-                      cursor: "pointer", fontFamily: "inherit",
-                      boxShadow: "0 0 12px #3b82f630",
-                    }}
-                  >
-                    Resume Simulation
-                  </button>
-                </div>
-                <div style={{ flex: 1, overflowY: "auto", padding: "4px 16px 6px" }}>
-                  {cascadeConflicts.map((c, i) => (
-                    <div key={i} style={{
-                      display: "flex", alignItems: "center", gap: 8,
-                      padding: "3px 0",
-                      borderBottom: i < cascadeConflicts.length - 1 ? "1px solid #1e293b30" : "none",
-                    }}>
-                      <span style={{
-                        fontSize: 10, fontWeight: 600, color: "#f59e0b",
-                        background: "#f59e0b15", borderRadius: 4, padding: "1px 6px",
-                        whiteSpace: "nowrap", flexShrink: 0,
-                      }}>
-                        {typeLabel(c.type)}
-                      </span>
-                      <span style={{ fontSize: 10, color: "#475569", flexShrink: 0 }}>→</span>
-                      {(c.schedule_impact_days || 0) > 0 && (
-                        <span style={{
-                          fontSize: 10, fontWeight: 700, color: "#ef4444",
-                          whiteSpace: "nowrap", flexShrink: 0,
-                        }}>
-                          +{c.schedule_impact_days}d delay
-                        </span>
-                      )}
-                      {(c.schedule_impact_days || 0) > 0 && (c.cost_impact || 0) > 0 && (
-                        <span style={{ fontSize: 10, color: "#334155", flexShrink: 0 }}>|</span>
-                      )}
-                      {(c.cost_impact || 0) > 0 && (
-                        <span style={{ fontSize: 10, fontWeight: 600, color: "#f97316", whiteSpace: "nowrap", flexShrink: 0 }}>
-                          {fmtUsd(c.cost_impact)}
-                        </span>
-                      )}
-                      <span style={{
-                        fontSize: 10, color: "#64748b", overflow: "hidden",
-                        textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0,
-                      }}>
-                        {c.message.replace(/^Day \d+:\s*/, "")}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-                <div style={{
-                  padding: "4px 16px 6px",
-                  borderTop: "1px solid #1e293b",
-                  display: "flex", gap: 16, flexShrink: 0,
-                }}>
-                  <span style={{ fontSize: 10, fontWeight: 700, color: "#ef4444" }}>
-                    Total schedule risk: +{totalDays} days
-                  </span>
-                  <span style={{ fontSize: 10, fontWeight: 700, color: "#f97316" }}>
-                    Total cost exposure: {fmtUsd(totalCost)}
-                  </span>
-                </div>
-              </div>
-            );
-          })()}
 
           {/* Timeline */}
           <div style={S.timeline}>
@@ -1447,9 +1495,7 @@ export default function Home() {
             </button>
             <button
               onClick={() => {
-                const next = !isPlaying;
-                setIsPlaying(next);
-                if (next) setConflictPaused(false);
+                setIsPlaying(!isPlaying);
               }}
               style={{
                 ...S.playBtn,
@@ -1461,22 +1507,6 @@ export default function Home() {
             >
               {isPlaying ? "⏸" : "▶"}
             </button>
-            {conflictPaused && !isPlaying && (
-              <span style={{
-                fontSize: 11,
-                fontWeight: 700,
-                color: "#ef4444",
-                background: "#ef444418",
-                border: "1px solid #ef444440",
-                borderRadius: 6,
-                padding: "4px 10px",
-                whiteSpace: "nowrap",
-                animation: "pulse-red 1.5s infinite",
-                flexShrink: 0,
-              }}>
-                PAUSED &mdash; conflict detected
-              </span>
-            )}
             <div style={S.dayInfo}>
               <span style={{ fontSize: 15, fontWeight: 700, color: "#f1f5f9" }}>
                 Day {day}
@@ -2863,32 +2893,10 @@ function getValidationIssues(config, cells) {
   return issues;
 }
 
-function ConfigurePanel({ cells, projectDuration, onConfigSave, onValidationChange }) {
+function ConfigurePanel({ cells, projectDuration, onConfigSave, onValidationChange, config, onConfigChange }) {
   console.log('cells received:', cells?.length, cells?.filter(c => c?.isOrigin && c?.id === 'crane').length, 'cranes');
   const [section, setSection] = useState("Phases");
   const [saved, setSaved] = useState(false);
-  const [config, setConfig] = useState({
-    phases: [
-      { id: "site-prep", name: "Site Preparation", startDay: 1, endDay: 10, color: "#64748b" },
-      { id: "foundation", name: "Foundation", startDay: 11, endDay: 30, color: "#3b82f6" },
-      { id: "structural", name: "Structural", startDay: 31, endDay: 60, color: "#8b5cf6" },
-      { id: "mep", name: "MEP", startDay: 61, endDay: 75, color: "#f59e0b" },
-      { id: "finishing", name: "Finishing", startDay: 76, endDay: 88, color: "#22c55e" },
-      { id: "closeout", name: "Closeout", startDay: 89, endDay: 90, color: "#ef4444" },
-    ],
-    cranes: [],
-    deliveries: [],
-    workforce: {
-      "site-prep": { total: 10, laborers: 8, operators: 2 },
-      foundation: { total: 25, laborers: 12, carpenters: 8, ironworkers: 3, operators: 2 },
-      structural: { total: 55, laborers: 10, carpenters: 5, ironworkers: 30, operators: 10 },
-      mep: { total: 40, laborers: 5, electricians: 15, plumbers: 15, operators: 5 },
-      finishing: { total: 25, laborers: 8, carpenters: 8, painters: 7, operators: 2 },
-      closeout: { total: 10, laborers: 8, operators: 2 },
-    },
-    equipment: [],
-    milestones: [],
-  });
 
   const craneZones = (cells || []).reduce((acc, cell, idx) => {
     if (cell && cell.isOrigin && cell.id === 'crane') acc.push({ cell, index: idx, idx, x: idx % GRID, y: Math.floor(idx / GRID) });
@@ -2918,7 +2926,7 @@ function ConfigurePanel({ cells, projectDuration, onConfigSave, onValidationChan
   const posLabel = (x, y) => `${colLabel(x)}${y + 1}`;
 
   const updatePhase = (idx, field, value) => {
-    setConfig((prev) => {
+    onConfigChange((prev) => {
       const phases = [...prev.phases];
       phases[idx] = { ...phases[idx], [field]: value };
       return { ...prev, phases };
@@ -2926,18 +2934,18 @@ function ConfigurePanel({ cells, projectDuration, onConfigSave, onValidationChan
   };
 
   const addPhase = () => {
-    setConfig((prev) => ({
+    onConfigChange((prev) => ({
       ...prev,
       phases: [...prev.phases, { id: `phase-${Date.now()}`, name: "", startDay: 1, endDay: 10, color: "#64748b" }],
     }));
   };
 
   const removePhase = (idx) => {
-    setConfig((prev) => ({ ...prev, phases: prev.phases.filter((_, i) => i !== idx) }));
+    onConfigChange((prev) => ({ ...prev, phases: prev.phases.filter((_, i) => i !== idx) }));
   };
 
   const updateDelivery = (idx, field, value) => {
-    setConfig((prev) => {
+    onConfigChange((prev) => {
       const deliveries = [...prev.deliveries];
       deliveries[idx] = { ...deliveries[idx], [field]: value };
       return { ...prev, deliveries };
@@ -2945,7 +2953,7 @@ function ConfigurePanel({ cells, projectDuration, onConfigSave, onValidationChan
   };
 
   const addDelivery = () => {
-    setConfig((prev) => ({
+    onConfigChange((prev) => ({
       ...prev,
       deliveries: [
         ...prev.deliveries,
@@ -2955,18 +2963,18 @@ function ConfigurePanel({ cells, projectDuration, onConfigSave, onValidationChan
   };
 
   const removeDelivery = (idx) => {
-    setConfig((prev) => ({ ...prev, deliveries: prev.deliveries.filter((_, i) => i !== idx) }));
+    onConfigChange((prev) => ({ ...prev, deliveries: prev.deliveries.filter((_, i) => i !== idx) }));
   };
 
   const updateWorkforce = (phaseId, field, value) => {
-    setConfig((prev) => ({
+    onConfigChange((prev) => ({
       ...prev,
       workforce: { ...prev.workforce, [phaseId]: { ...prev.workforce[phaseId], [field]: Number(value) || 0 } },
     }));
   };
 
   const updateEquipment = (idx, field, value) => {
-    setConfig((prev) => {
+    onConfigChange((prev) => {
       const equipment = [...prev.equipment];
       equipment[idx] = { ...equipment[idx], [field]: value };
       return { ...prev, equipment };
@@ -2974,7 +2982,7 @@ function ConfigurePanel({ cells, projectDuration, onConfigSave, onValidationChan
   };
 
   const addEquipment = () => {
-    setConfig((prev) => ({
+    onConfigChange((prev) => ({
       ...prev,
       equipment: [
         ...prev.equipment,
@@ -2984,11 +2992,11 @@ function ConfigurePanel({ cells, projectDuration, onConfigSave, onValidationChan
   };
 
   const removeEquipment = (idx) => {
-    setConfig((prev) => ({ ...prev, equipment: prev.equipment.filter((_, i) => i !== idx) }));
+    onConfigChange((prev) => ({ ...prev, equipment: prev.equipment.filter((_, i) => i !== idx) }));
   };
 
   const updateMilestone = (idx, field, value) => {
-    setConfig((prev) => {
+    onConfigChange((prev) => {
       const milestones = [...prev.milestones];
       milestones[idx] = { ...milestones[idx], [field]: value };
       return { ...prev, milestones };
@@ -2996,7 +3004,7 @@ function ConfigurePanel({ cells, projectDuration, onConfigSave, onValidationChan
   };
 
   const addMilestone = () => {
-    setConfig((prev) => ({
+    onConfigChange((prev) => ({
       ...prev,
       milestones: [
         ...prev.milestones,
@@ -3006,11 +3014,11 @@ function ConfigurePanel({ cells, projectDuration, onConfigSave, onValidationChan
   };
 
   const removeMilestone = (idx) => {
-    setConfig((prev) => ({ ...prev, milestones: prev.milestones.filter((_, i) => i !== idx) }));
+    onConfigChange((prev) => ({ ...prev, milestones: prev.milestones.filter((_, i) => i !== idx) }));
   };
 
   const updateCrane = (idx, field, value) => {
-    setConfig((prev) => {
+    onConfigChange((prev) => {
       const cranes = [...prev.cranes];
       cranes[idx] = { ...cranes[idx], [field]: value };
       return { ...prev, cranes };
@@ -3019,7 +3027,7 @@ function ConfigurePanel({ cells, projectDuration, onConfigSave, onValidationChan
 
   useEffect(() => {
     if (craneZones.length > 0 && config.cranes.length === 0) {
-      setConfig((prev) => ({
+      onConfigChange((prev) => ({
         ...prev,
         cranes: craneZones.map((cz) => ({
           id: `crane-${cz.x}-${cz.y}`, x: cz.x, y: cz.y, type: "Tower Crane",
@@ -3672,7 +3680,7 @@ const S = {
     gap: 6,
   },
   gridHeader: {
-    width: GRID * 28 + 24,
+    width: GRID * 34 + 24,
     display: "flex",
     justifyContent: "space-between",
     alignItems: "center",
@@ -3681,7 +3689,7 @@ const S = {
   },
   colLabelRow: {
     display: "grid",
-    gridTemplateColumns: `repeat(${GRID}, 28px)`,
+    gridTemplateColumns: `repeat(${GRID}, 34px)`,
     marginBottom: 2,
   },
   colLabel: {
@@ -3697,7 +3705,7 @@ const S = {
     marginRight: 4,
   },
   rowLabel: {
-    height: 28,
+    height: 34,
     display: "flex",
     alignItems: "center",
     justifyContent: "flex-end",

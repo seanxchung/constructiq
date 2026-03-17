@@ -372,20 +372,35 @@ def run_simulation_tick(
 
     current_phase = _determine_phase(active_tasks, day, schedule)
 
-    # --- Workforce scaling from project_config phases ---
-    _PHASE_TO_CONFIG_KEY = {
-        "site_prep": "site-prep",
-        "structure": "structural",
-        "commissioning": "closeout",
+    # --- Workforce from project_config phases ---
+    _TRADE_TO_ROLE: dict[str, str] = {
+        "laborers": "laborer",
+        "carpenters": "carpenter",
+        "ironworkers": "ironworker",
+        "electricians": "electrician",
+        "plumbers": "plumber",
+        "operators": "equipment_operator",
+        "painters": "painter",
+        "hvac": "specialist",
     }
-    phase_worker_scale: float | None = None
-    if project_config and project_config.get("workforce"):
-        config_key = _PHASE_TO_CONFIG_KEY.get(current_phase, current_phase)
-        wf = project_config["workforce"].get(config_key, {})
-        phase_total = wf.get("total", 0)
-        if phase_total > 0:
-            default_total = sum(DEFAULT_CREW_POOL.values())
-            phase_worker_scale = phase_total / max(1, default_total)
+    if project_config and project_config.get("phases") and project_config.get("workforce"):
+        phase_id: str | None = None
+        for phase_cfg in project_config["phases"]:
+            if phase_cfg.get("startDay", 0) <= day <= phase_cfg.get("endDay", 0):
+                phase_id = phase_cfg.get("id")
+                break
+        if phase_id:
+            wf = project_config["workforce"].get(phase_id, {})
+            configured_pool: dict[str, int] = {}
+            for trade, role in _TRADE_TO_ROLE.items():
+                count = wf.get(trade, 0)
+                if count > 0:
+                    configured_pool[role] = configured_pool.get(role, 0) + count
+            other_count = wf.get("other", 0)
+            if other_count > 0:
+                configured_pool["laborer"] = configured_pool.get("laborer", 0) + other_count
+            if sum(configured_pool.values()) > 0:
+                crew_pool = {**DEFAULT_CREW_POOL, **configured_pool}
 
     # --- Crew demand from active tasks ---
     crew_required: dict[str, int] = {}
@@ -400,8 +415,6 @@ def run_simulation_tick(
         if weekend:
             needed = max(1, round(needed * WEEKEND_CREW_FACTOR))
         available = crew_pool.get(role, 0)
-        if phase_worker_scale is not None:
-            available = max(1, round(available * phase_worker_scale))
         crew_on_site[role] = min(needed, available)
 
     total_workers = sum(crew_on_site.values())
